@@ -1,20 +1,24 @@
 use clap::Parser;
 use std::net::{IpAddr, SocketAddr};
 
-#[derive(Debug, Copy, Clone, Parser)]
+#[derive(Debug, Clone, Parser)]
 #[command(author, version, about = "tun2socks5 application.", long_about = None)]
 pub struct Args {
-    /// echo server address, likes `127.0.0.1:8080`
+    /// Proxy server address, likes `127.0.0.1:8080`
     #[arg(short, long, value_name = "IP:port")]
     pub server_addr: SocketAddr,
 
     /// DNS handling strategy
-    #[arg(short, long, value_name = "strategy", value_enum, default_value = "Direct")]
+    #[arg(short, long, value_name = "strategy", value_enum, default_value = "direct")]
     pub dns: ArgDns,
 
     /// DNS resolver address
     #[arg(long, value_name = "IP", default_value = "8.8.8.8")]
     pub dns_addr: IpAddr,
+
+    /// IPs used in routing setup which should bypass the tunnel
+    #[arg(short, long, value_name = "IP")]
+    pub bypass: Vec<IpAddr>,
 
     /// Verbosity level
     #[arg(short, long, value_name = "level", value_enum, default_value = "info")]

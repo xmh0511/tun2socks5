@@ -6,6 +6,7 @@ pub use args::Args;
 pub use error::{Error, Result};
 use ipstack::stream::{IpStackStream, IpStackTcpStream, IpStackUdpStream};
 use proxy_handler::{ConnectionManager, ProxyHandler};
+pub use route_config::{config_restore, config_settings, DEFAULT_GATEWAY, TUN_DNS, TUN_GATEWAY, TUN_IPV4, TUN_NETMASK};
 use socks::SocksProxyManager;
 use std::{net::SocketAddr, sync::Arc};
 use tokio::{
@@ -19,6 +20,7 @@ mod args;
 mod directions;
 mod error;
 mod proxy_handler;
+mod route_config;
 mod session_info;
 mod socks;
 
@@ -157,7 +159,7 @@ async fn handle_proxy_connection(
             let data = proxy_handler.peek_data(dir).buffer;
             let len = data.len();
             if len == 0 {
-                return Err("proxy_handler went wrong".into());
+                return Err("proxy_handler launched went wrong".into());
             }
             server.write_all(data).await?;
             proxy_handler.consume_data(dir, len);
