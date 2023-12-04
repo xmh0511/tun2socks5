@@ -1,16 +1,17 @@
 use crate::{
-    directions::OutgoingDirection,
+    directions::{IncomingDataEvent, IncomingDirection, OutgoingDirection},
     session_info::{IpProtocol, SessionInfo},
 };
 pub use args::Args;
 pub use error::{Error, Result};
-use ipstack::stream::IpStackStream;
-use proxy_handler::ConnectionManager;
+use ipstack::stream::{IpStackStream, IpStackTcpStream};
+use proxy_handler::{ConnectionManager, ProxyHandler};
 use socks::SocksProxyManager;
-use std::sync::Arc;
+use std::{net::SocketAddr, sync::Arc};
 use tokio::{
-    io::{AsyncRead, AsyncWrite},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::TcpStream,
+    sync::Mutex,
 };
 use udp_stream::UdpStream;
 
@@ -37,23 +38,10 @@ where
             IpStackStream::Tcp(tcp) => {
                 let info = SessionInfo::new(tcp.local_addr(), tcp.peer_addr(), IpProtocol::Tcp);
                 let proxy_handler = mgr.new_proxy_handler(info, false)?;
-
-                let s = TcpStream::connect(server_addr).await;
-                if let Err(ref err) = s {
-                    log::error!("connect TCP server {} failed \"{}\"", info, err);
-                    continue;
-                }
-                log::info!("==== New TCP connection {} ====", info);
-                let (mut t_rx, mut t_tx) = tokio::io::split(tcp);
-                let (mut s_rx, mut s_tx) = tokio::io::split(s?);
                 tokio::spawn(async move {
-                    proxy_handler.lock().unwrap().peek_data(OutgoingDirection::ToServer);
-                    let _r = tokio::join! {
-                         tokio::io::copy(&mut t_rx, &mut s_tx) ,
-                         tokio::io::copy(&mut s_rx, &mut t_tx),
-                    };
-
-                    log::info!("====== end tcp connection ======");
+                    if let Err(err) = handle_tcp_connection(tcp, server_addr, proxy_handler).await {
+                        log::error!("handle tcp connection failed \"{}\"", err);
+                    }
                 });
             }
             IpStackStream::Udp(udp) => {
@@ -78,4 +66,75 @@ where
             }
         };
     }
+}
+
+async fn handle_tcp_connection(
+    tcp_stack: IpStackTcpStream,
+    server_addr: SocketAddr,
+    proxy_handler: Arc<Mutex<dyn ProxyHandler + Send + Sync>>,
+) -> crate::Result<()> {
+    let mut server = TcpStream::connect(server_addr).await?;
+
+    log::info!("==== New TCP connection {} ====", proxy_handler.lock().await.get_connection_info());
+
+    let _ = handle_proxy_connection(&mut server, proxy_handler).await?;
+
+    let (mut t_rx, mut t_tx) = tokio::io::split(tcp_stack);
+    let (mut s_rx, mut s_tx) = tokio::io::split(server);
+
+    let _r = tokio::join! {
+         tokio::io::copy(&mut t_rx, &mut s_tx) ,
+         tokio::io::copy(&mut s_rx, &mut t_tx),
+    };
+
+    log::info!("====== end tcp connection ======");
+
+    Ok(())
+}
+
+async fn handle_proxy_connection(
+    server: &mut TcpStream,
+    proxy_handler: Arc<Mutex<dyn ProxyHandler + Send + Sync>>,
+) -> crate::Result<Option<SocketAddr>> {
+    let mut launched = false;
+    let mut proxy_handler = proxy_handler.lock().await;
+    let dir = OutgoingDirection::ToServer;
+
+    loop {
+        if proxy_handler.connection_established() {
+            break;
+        }
+
+        if !launched {
+            let data = proxy_handler.peek_data(dir).buffer;
+            let len = data.len();
+            if len == 0 {
+                return Err("proxy_handler went wrong".into());
+            }
+            server.write_all(data).await?;
+            proxy_handler.consume_data(dir, len);
+
+            launched = true;
+        }
+
+        let mut buf = [0_u8; 4096];
+        let len = server.read(&mut buf).await?;
+        if len == 0 {
+            return Err("server closed accidentially".into());
+        }
+        let event = IncomingDataEvent {
+            direction: IncomingDirection::FromServer,
+            buffer: &buf[..len],
+        };
+        proxy_handler.push_data(event)?;
+
+        let data = proxy_handler.peek_data(dir).buffer;
+        let len = data.len();
+        if len == 0 {
+            return Err("proxy_handler went wrong".into());
+        }
+        server.write_all(data).await?;
+        proxy_handler.consume_data(dir, len);
+    }
+    Ok(proxy_handler.get_udp_associate())
 }

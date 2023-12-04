@@ -1,16 +1,12 @@
 use crate::{
-    directions::{Direction, IncomingDataEvent, IncomingDirection, OutgoingDataEvent, OutgoingDirection},
+    directions::{IncomingDataEvent, IncomingDirection, OutgoingDataEvent, OutgoingDirection},
     error::{Error, Result},
     proxy_handler::{ConnectionManager, ProxyHandler},
     session_info::SessionInfo,
 };
 use socks5_impl::protocol::{self, handshake, password_method, Address, AuthMethod, StreamOperation, UserKey, Version};
-use std::{
-    collections::VecDeque,
-    convert::TryFrom,
-    net::SocketAddr,
-    sync::{Arc, Mutex},
-};
+use std::{collections::VecDeque, net::SocketAddr, sync::Arc};
+use tokio::sync::Mutex;
 
 #[derive(Eq, PartialEq, Debug)]
 enum SocksState {
@@ -288,16 +284,10 @@ impl ProxyHandler for SocksProxyImpl {
         self.state == SocksState::Established
     }
 
-    fn data_len(&self, dir: Direction) -> usize {
+    fn data_len(&self, dir: OutgoingDirection) -> usize {
         match dir {
-            Direction::Incoming(incoming) => match incoming {
-                IncomingDirection::FromServer => self.server_inbuf.len(),
-                IncomingDirection::FromClient => self.client_inbuf.len(),
-            },
-            Direction::Outgoing(outgoing) => match outgoing {
-                OutgoingDirection::ToServer => self.server_outbuf.len(),
-                OutgoingDirection::ToClient => self.client_outbuf.len(),
-            },
+            OutgoingDirection::ToServer => self.server_outbuf.len(),
+            OutgoingDirection::ToClient => self.client_outbuf.len(),
         }
     }
 
