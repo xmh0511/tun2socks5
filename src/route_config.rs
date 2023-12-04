@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::net::{IpAddr, Ipv4Addr};
 
 pub const TUN_IPV4: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 33));
@@ -42,7 +44,7 @@ pub fn config_settings(bypass_ips: &[IpAddr], tun_name: &str, dns_addr: Option<I
 }
 
 #[cfg(unix)]
-pub fn config_settings(bypass_ips: &[IpAddr], tun_name: &str, _dns_addr: Option<IpAddr>) -> std::io::Result<()> {
+pub fn config_settings(_bypass_ips: &[IpAddr], _tun_name: &str, _dns_addr: Option<IpAddr>) -> std::io::Result<()> {
     unimplemented!()
 }
 
@@ -115,7 +117,7 @@ pub(crate) fn get_default_gateway() -> std::io::Result<IpAddr> {
     }
 
     let err = std::io::Error::new(std::io::ErrorKind::Other, "No default gateway found");
-    ipv4_gateway.or(ipv6_gateway).ok_or_else(|| err)
+    ipv4_gateway.or(ipv6_gateway).ok_or(err)
 }
 
 #[cfg(unix)]
