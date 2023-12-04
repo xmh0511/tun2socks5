@@ -6,7 +6,7 @@ edition = "2021"
 
 [dependencies]
 clap = { version = "4.4", features = ["derive"] }
-ctrlc2 = "3.5"
+ctrlc2 = { version = "3.5", features = ["tokio", "termination"] }
 dotenvy = "0.15"
 env_logger = "0.10"
 ipstack = { git = "https://github.com/ssrlive/ipstack.git" }

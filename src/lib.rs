@@ -26,6 +26,9 @@ mod socks;
 
 const DNS_PORT: u16 = 53;
 
+static TASK_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+use std::sync::atomic::Ordering::Relaxed;
+
 pub async fn main_entry<D>(device: D, mtu: u16, packet_info: bool, args: Args) -> crate::Result<()>
 where
     D: AsyncRead + AsyncWrite + Unpin + Send + 'static,
@@ -41,15 +44,18 @@ where
     loop {
         match ip_stack.accept().await? {
             IpStackStream::Tcp(tcp) => {
+                log::trace!("Session count {}", TASK_COUNT.fetch_add(1, Relaxed) + 1);
                 let info = SessionInfo::new(tcp.local_addr(), tcp.peer_addr(), IpProtocol::Tcp);
                 let proxy_handler = mgr.new_proxy_handler(info, false)?;
                 tokio::spawn(async move {
                     if let Err(err) = handle_tcp_connection(tcp, server_addr, proxy_handler).await {
-                        log::error!("handle tcp connection failed \"{}\"", err);
+                        log::error!("{} error \"{}\"", info, err);
                     }
+                    log::trace!("Session count {}", TASK_COUNT.fetch_sub(1, Relaxed) - 1);
                 });
             }
             IpStackStream::Udp(udp) => {
+                log::trace!("Session count {}", TASK_COUNT.fetch_add(1, Relaxed) + 1);
                 let mut info = SessionInfo::new(udp.local_addr(), udp.peer_addr(), IpProtocol::Udp);
                 if info.dst.port() == DNS_PORT && addr_is_private(&info.dst) {
                     info.dst.set_ip(dns_addr);
@@ -57,8 +63,9 @@ where
                 let proxy_handler = mgr.new_proxy_handler(info, true)?;
                 tokio::spawn(async move {
                     if let Err(err) = handle_udp_associate_connection(udp, server_addr, proxy_handler).await {
-                        log::error!("handle udp connection failed \"{}\"", err);
+                        log::error!("{} error \"{}\"", info, err);
                     }
+                    log::trace!("Session count {}", TASK_COUNT.fetch_sub(1, Relaxed) - 1);
                 });
             }
         };
@@ -68,23 +75,28 @@ where
 async fn handle_tcp_connection(
     tcp_stack: IpStackTcpStream,
     server_addr: SocketAddr,
-    proxy_handler: Arc<Mutex<dyn ProxyHandler + Send + Sync>>,
+    proxy_handler: Arc<Mutex<dyn ProxyHandler>>,
 ) -> crate::Result<()> {
     let mut server = TcpStream::connect(server_addr).await?;
 
-    log::info!("==== New TCP connection {} ====", proxy_handler.lock().await.get_connection_info());
+    let session_info = proxy_handler.lock().await.get_connection_info();
+    log::info!("Beginning {}", session_info);
 
     let _ = handle_proxy_connection(&mut server, proxy_handler).await?;
 
     let (mut t_rx, mut t_tx) = tokio::io::split(tcp_stack);
     let (mut s_rx, mut s_tx) = tokio::io::split(server);
 
-    let _r = tokio::join! {
+    let result = tokio::join! {
          tokio::io::copy(&mut t_rx, &mut s_tx) ,
          tokio::io::copy(&mut s_rx, &mut t_tx),
     };
+    let result = match result {
+        (Ok(t), Ok(s)) => Ok((t, s)),
+        (Err(e), _) | (_, Err(e)) => Err(e),
+    };
 
-    log::info!("====== end tcp connection ======");
+    log::info!("Ending {} with {:?}", session_info, result);
 
     Ok(())
 }
@@ -92,12 +104,12 @@ async fn handle_tcp_connection(
 async fn handle_udp_associate_connection(
     mut udp_stack: IpStackUdpStream,
     server_addr: SocketAddr,
-    proxy_handler: Arc<Mutex<dyn ProxyHandler + Send + Sync>>,
+    proxy_handler: Arc<Mutex<dyn ProxyHandler>>,
 ) -> crate::Result<()> {
     use socks5_impl::protocol::{StreamOperation, UdpHeader};
     let mut server = TcpStream::connect(server_addr).await?;
-    let info = proxy_handler.lock().await.get_connection_info();
-    log::info!("==== New UDP connection {} ====", info);
+    let session_info = proxy_handler.lock().await.get_connection_info();
+    log::info!("Beginning {}", session_info);
 
     let udp_addr = handle_proxy_connection(&mut server, proxy_handler).await?;
     let udp_addr = udp_addr.ok_or("udp associate failed")?;
@@ -117,7 +129,7 @@ async fn handle_udp_associate_connection(
 
                 // Add SOCKS5 UDP header to the incoming data
                 let mut s5_udp_data = Vec::<u8>::new();
-                UdpHeader::new(0, info.dst.into()).write_to_stream(&mut s5_udp_data)?;
+                UdpHeader::new(0, session_info.dst.into()).write_to_stream(&mut s5_udp_data)?;
                 s5_udp_data.extend_from_slice(buf1);
 
                 udp_server.write_all(&s5_udp_data).await?;
@@ -137,15 +149,12 @@ async fn handle_udp_associate_connection(
         }
     }
 
-    log::info!("==== end UDP connection ====");
+    log::info!("Ending {}", session_info);
 
     Ok(())
 }
 
-async fn handle_proxy_connection(
-    server: &mut TcpStream,
-    proxy_handler: Arc<Mutex<dyn ProxyHandler + Send + Sync>>,
-) -> crate::Result<Option<SocketAddr>> {
+async fn handle_proxy_connection(server: &mut TcpStream, proxy_handler: Arc<Mutex<dyn ProxyHandler>>) -> crate::Result<Option<SocketAddr>> {
     let mut launched = false;
     let mut proxy_handler = proxy_handler.lock().await;
     let dir = OutgoingDirection::ToServer;

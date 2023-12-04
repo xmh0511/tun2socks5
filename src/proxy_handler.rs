@@ -5,7 +5,7 @@ use crate::{
 use std::{net::SocketAddr, sync::Arc};
 use tokio::sync::Mutex;
 
-pub(crate) trait ProxyHandler {
+pub(crate) trait ProxyHandler: Send + Sync {
     fn get_connection_info(&self) -> SessionInfo;
     fn push_data(&mut self, event: IncomingDataEvent<'_>) -> std::io::Result<()>;
     fn consume_data(&mut self, dir: OutgoingDirection, size: usize);
@@ -16,7 +16,7 @@ pub(crate) trait ProxyHandler {
     fn get_udp_associate(&self) -> Option<SocketAddr>;
 }
 
-pub(crate) trait ConnectionManager {
-    fn new_proxy_handler(&self, info: SessionInfo, udp_associate: bool) -> std::io::Result<Arc<Mutex<dyn ProxyHandler + Send + Sync>>>;
+pub(crate) trait ConnectionManager: Send + Sync {
+    fn new_proxy_handler(&self, info: SessionInfo, udp_associate: bool) -> std::io::Result<Arc<Mutex<dyn ProxyHandler>>>;
     fn get_server_addr(&self) -> SocketAddr;
 }

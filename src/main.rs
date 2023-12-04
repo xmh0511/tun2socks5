@@ -30,7 +30,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     config_settings(&args.bypass, "utun3", Some(args.dns_addr))?;
 
-    main_entry(device, MTU, true, args).await?;
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<()>(1);
+    ctrlc2::set_async_handler(async move {
+        tx.send(()).await.expect("Send exit signal");
+    })
+    .await;
+
+    tokio::spawn(async move {
+        main_entry(device, MTU, true, args).await.unwrap();
+    });
+
+    rx.recv().await.expect("Receive signal failed");
+    log::info!("");
+    log::info!("Ctrl-C recieved, exiting...");
 
     config_restore()?;
 
