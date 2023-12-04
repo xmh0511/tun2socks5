@@ -8,22 +8,14 @@ pub const TUN_DNS: IpAddr = IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8));
 pub static mut DEFAULT_GATEWAY: Option<IpAddr> = None;
 
 #[cfg(windows)]
-pub fn config_settings<'a>(bypass_ips: &[IpAddr], _dns_addr: Option<IpAddr>) -> std::io::Result<()> {
-    // let adapter = self.wintun_session.get_adapter();
-
-    // // Setup the adapter's address/mask/gateway
-    // let address = TUN_IPV4;
-    // let mask = TUN_NETMASK;
-    // let gateway = TUN_GATEWAY;
-    // adapter
-    //     .set_network_addresses_tuple(address, mask, Some(gateway))
-    //     .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-
-    // // 1. Setup the adapter's DNS
-    // let interface = GUID::from(adapter.get_guid());
-    // let dns = dns_addr.unwrap_or("8.8.8.8".parse::<IpAddr>().unwrap());
-    // let dns2 = "8.8.4.4".parse::<IpAddr>().unwrap();
-    // set_interface_dns_settings(interface, &[dns, dns2])?;
+pub fn config_settings(bypass_ips: &[IpAddr], tun_name: &str, dns_addr: Option<IpAddr>) -> std::io::Result<()> {
+    // 1. Setup the adapter's DNS
+    // command: `netsh interface ip set dns "utun3" static 8.8.8.8`
+    let dns_addr = dns_addr.unwrap_or(TUN_DNS);
+    let tun_name = format!("\"{}\"", tun_name);
+    let args = &["interface", "ip", "set", "dns", &tun_name, "static", &dns_addr.to_string()];
+    run_command("netsh", args)?;
+    log::info!("netsh {:?}", args);
 
     // 2. Route all traffic to the adapter, here the destination is adapter's gateway
     // command: `route add 0.0.0.0 mask 0.0.0.0 10.1.0.1 metric 6`
@@ -50,7 +42,7 @@ pub fn config_settings<'a>(bypass_ips: &[IpAddr], _dns_addr: Option<IpAddr>) -> 
 }
 
 #[cfg(unix)]
-pub fn config_settings<'a>(bypass_ips: &[IpAddr], dns_addr: Option<IpAddr>) -> std::io::Result<()> {
+pub fn config_settings(bypass_ips: &[IpAddr], tun_name: &str, _dns_addr: Option<IpAddr>) -> std::io::Result<()> {
     unimplemented!()
 }
 

@@ -28,7 +28,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let device = tun::create_as_async(&config)?;
 
-    config_settings(&args.bypass, None)?;
+    config_settings(&args.bypass, "utun3", Some(args.dns_addr))?;
 
     main_entry(device, MTU, true, args).await?;
 
