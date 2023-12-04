@@ -180,11 +180,10 @@ async fn handle_proxy_connection(
 
         let data = proxy_handler.peek_data(dir).buffer;
         let len = data.len();
-        if len == 0 {
-            return Err("proxy_handler went wrong".into());
+        if len > 0 {
+            server.write_all(data).await?;
+            proxy_handler.consume_data(dir, len);
         }
-        server.write_all(data).await?;
-        proxy_handler.consume_data(dir, len);
     }
     Ok(proxy_handler.get_udp_associate())
 }

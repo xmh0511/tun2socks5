@@ -112,7 +112,7 @@ impl SocksProxyImpl {
         self.server_inbuf.drain(0..8);
 
         self.state = SocksState::Established;
-        self.state_change()
+        Ok(())
     }
 
     fn receive_server_hello_socks5(&mut self) -> std::io::Result<()> {
@@ -156,7 +156,7 @@ impl SocksProxyImpl {
         let request = password_method::Request::new(&credentials.username, &credentials.password);
         request.write_to_stream(&mut self.server_outbuf)?;
         self.state = SocksState::ReceiveAuthResponse;
-        self.state_change()
+        Ok(())
     }
 
     fn receive_auth_data(&mut self) -> std::io::Result<()> {
@@ -187,7 +187,7 @@ impl SocksProxyImpl {
         };
         protocol::Request::new(self.command, addr).write_to_stream(&mut self.server_outbuf)?;
         self.state = SocksState::ReceiveResponse;
-        self.state_change()
+        Ok(())
     }
 
     fn receive_connection_status(&mut self) -> std::io::Result<()> {
@@ -211,7 +211,7 @@ impl SocksProxyImpl {
         }
 
         self.state = SocksState::Established;
-        self.state_change()
+        Ok(())
     }
 
     fn relay_traffic(&mut self) -> Result<(), Error> {
