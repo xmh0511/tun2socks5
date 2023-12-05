@@ -1,4 +1,5 @@
 use crate::{
+    args::ProxyType,
     directions::{IncomingDataEvent, IncomingDirection, OutgoingDirection},
     session_info::{IpProtocol, SessionInfo},
 };
@@ -34,12 +35,19 @@ pub async fn main_entry<D>(device: D, mtu: u16, packet_info: bool, args: Args) -
 where
     D: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    let server_addr = args.server_addr;
+    let server_addr = args.proxy.addr;
+    let key = args.proxy.credentials.clone();
     let dns_addr = args.dns_addr;
     let ipv6_enabled = args.ipv6_enabled;
 
-    use socks5_impl::protocol::Version::V5;
-    let mgr = Arc::new(SocksProxyManager::new(server_addr, V5, None)) as Arc<dyn ConnectionManager>;
+    use socks5_impl::protocol::Version::{V4, V5};
+    let mgr = match args.proxy.proxy_type {
+        ProxyType::Socks5 => Arc::new(SocksProxyManager::new(server_addr, V5, key)) as Arc<dyn ConnectionManager>,
+        ProxyType::Socks4 => Arc::new(SocksProxyManager::new(server_addr, V4, key)) as Arc<dyn ConnectionManager>,
+        ProxyType::Http => {
+            unimplemented!("http proxy is not implemented yet")
+        }
+    };
 
     let mut ip_stack = ipstack::IpStack::new(device, mtu, packet_info);
 

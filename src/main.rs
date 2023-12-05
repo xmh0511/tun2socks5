@@ -14,7 +14,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut config = tun::Configuration::default();
     config.address(TUN_IPV4).netmask(TUN_NETMASK).mtu(MTU as i32).up();
-    config.destination(TUN_GATEWAY).name("utun3");
+    config.destination(TUN_GATEWAY).name(&args.tun);
 
     #[cfg(target_os = "linux")]
     config.platform(|config| {
@@ -28,7 +28,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let device = tun::create_as_async(&config)?;
 
-    config_settings(&args.bypass, "utun3", Some(args.dns_addr))?;
+    config_settings(&args.bypass, &args.tun, Some(args.dns_addr))?;
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<()>(1);
     ctrlc2::set_async_handler(async move {
