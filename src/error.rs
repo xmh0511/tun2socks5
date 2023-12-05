@@ -24,6 +24,9 @@ pub enum Error {
     #[error("IpStackError {0:?}")]
     IpStack(#[from] ipstack::IpStackError),
 
+    #[error("DnsProtoError {0:?}")]
+    DnsProto(#[from] trust_dns_proto::error::ProtoError),
+
     #[cfg(target_os = "android")]
     #[error("jni::errors::Error {0:?}")]
     Jni(#[from] jni::errors::Error),

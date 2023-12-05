@@ -48,6 +48,6 @@ impl SessionInfo {
 
 impl std::fmt::Display for SessionInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{} {} {} -> {}", self.id, self.protocol, self.src, self.dst)
+        write!(f, "#{} {} {} -> {}", self.id, self.protocol, self.src, self.dst)
     }
 }

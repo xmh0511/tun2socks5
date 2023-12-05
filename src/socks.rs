@@ -207,7 +207,7 @@ impl SocksProxyImpl {
         }
         if self.command == protocol::Command::UdpAssociate {
             self.udp_associate = Some(SocketAddr::try_from(&response.address)?);
-            log::trace!("UDP associate recieved address {}", response.address);
+            // log::trace!("UDP associate recieved address {}", response.address);
         }
 
         self.state = SocksState::Established;

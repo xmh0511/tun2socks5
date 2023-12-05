@@ -8,6 +8,10 @@ pub struct Args {
     #[arg(short, long, value_name = "IP:port")]
     pub server_addr: SocketAddr,
 
+    /// IPv6 enabled
+    #[arg(short = '6', long)]
+    pub ipv6_enabled: bool,
+
     /// DNS handling strategy
     #[arg(short, long, value_name = "strategy", value_enum, default_value = "direct")]
     pub dns: ArgDns,

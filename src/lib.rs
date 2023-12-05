@@ -18,6 +18,7 @@ use udp_stream::UdpStream;
 
 mod args;
 mod directions;
+mod dns;
 mod error;
 mod proxy_handler;
 mod route_config;
@@ -35,6 +36,7 @@ where
 {
     let server_addr = args.server_addr;
     let dns_addr = args.dns_addr;
+    let ipv6_enabled = args.ipv6_enabled;
 
     use socks5_impl::protocol::Version::V5;
     let mgr = Arc::new(SocksProxyManager::new(server_addr, V5, None)) as Arc<dyn ConnectionManager>;
@@ -57,12 +59,12 @@ where
             IpStackStream::Udp(udp) => {
                 log::trace!("Session count {}", TASK_COUNT.fetch_add(1, Relaxed) + 1);
                 let mut info = SessionInfo::new(udp.local_addr(), udp.peer_addr(), IpProtocol::Udp);
-                if info.dst.port() == DNS_PORT && addr_is_private(&info.dst) {
+                if info.dst.port() == DNS_PORT && dns::addr_is_private(&info.dst) {
                     info.dst.set_ip(dns_addr);
                 }
                 let proxy_handler = mgr.new_proxy_handler(info, true)?;
                 tokio::spawn(async move {
-                    if let Err(err) = handle_udp_associate_connection(udp, server_addr, proxy_handler).await {
+                    if let Err(err) = handle_udp_associate_connection(udp, server_addr, proxy_handler, ipv6_enabled).await {
                         log::error!("{} error \"{}\"", info, err);
                     }
                     log::trace!("Session count {}", TASK_COUNT.fetch_sub(1, Relaxed) - 1);
@@ -105,6 +107,7 @@ async fn handle_udp_associate_connection(
     mut udp_stack: IpStackUdpStream,
     server_addr: SocketAddr,
     proxy_handler: Arc<Mutex<dyn ProxyHandler>>,
+    ipv6_enabled: bool,
 ) -> crate::Result<()> {
     use socks5_impl::protocol::{StreamOperation, UdpHeader};
     let mut server = TcpStream::connect(server_addr).await?;
@@ -141,10 +144,21 @@ async fn handle_udp_associate_connection(
                 }
                 let buf2 = &buf2[..len];
 
-                // Remove SOCKS5 UDP header from the incoming data
+                // Remove SOCKS5 UDP header from the server data
                 let header = UdpHeader::retrieve_from_stream(&mut &buf2[..])?;
+                let data = &buf2[header.len()..];
 
-                udp_stack.write_all(&buf2[header.len()..]).await?;
+                let buf = if session_info.dst.port() == DNS_PORT {
+                    let mut message = dns::parse_data_to_dns_message(data, false)?;
+                    if !ipv6_enabled {
+                        dns::remove_ipv6_entries(&mut message);
+                    }
+                    message.to_vec()?
+                } else {
+                    data.to_vec()
+                };
+
+                udp_stack.write_all(&buf).await?;
             }
         }
     }
@@ -195,18 +209,4 @@ async fn handle_proxy_connection(server: &mut TcpStream, proxy_handler: Arc<Mute
         }
     }
     Ok(proxy_handler.get_udp_associate())
-}
-
-// FIXME: use IpAddr::is_global() instead when it's stable
-pub fn addr_is_private(addr: &SocketAddr) -> bool {
-    fn is_benchmarking(addr: &std::net::Ipv4Addr) -> bool {
-        addr.octets()[0] == 198 && (addr.octets()[1] & 0xfe) == 18
-    }
-    fn addr_v4_is_private(addr: &std::net::Ipv4Addr) -> bool {
-        is_benchmarking(addr) || addr.is_private() || addr.is_loopback() || addr.is_link_local()
-    }
-    match addr {
-        SocketAddr::V4(addr) => addr_v4_is_private(addr.ip()),
-        SocketAddr::V6(_) => false,
-    }
 }
