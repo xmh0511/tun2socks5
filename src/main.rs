@@ -9,12 +9,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
     let args = Args::parse();
 
+    let tun_name = args.tun.clone();
+    let bypass_ips = args.bypass.clone();
+
     let default = format!("{}={:?}", module_path!(), args.verbosity);
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(default)).init();
 
     let mut config = tun::Configuration::default();
     config.address(TUN_IPV4).netmask(TUN_NETMASK).mtu(MTU as i32).up();
-    config.destination(TUN_GATEWAY).name(&args.tun);
+    config.destination(TUN_GATEWAY).name(&tun_name);
 
     #[cfg(target_os = "linux")]
     config.platform(|config| {
@@ -28,7 +31,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let device = tun::create_as_async(&config)?;
 
-    config_settings(&args.bypass, &args.tun, Some(args.dns_addr))?;
+    config_settings(&args.bypass, &tun_name, Some(args.dns_addr))?;
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<()>(1);
     ctrlc2::set_async_handler(async move {
@@ -44,7 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     log::info!("");
     log::info!("Ctrl-C recieved, exiting...");
 
-    config_restore()?;
+    config_restore(&bypass_ips, &tun_name)?;
 
     Ok(())
 }
