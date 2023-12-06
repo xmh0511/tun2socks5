@@ -10,7 +10,7 @@ use ipstack::stream::{IpStackStream, IpStackTcpStream, IpStackUdpStream};
 use proxy_handler::{ConnectionManager, ProxyHandler};
 pub use route_config::{config_restore, config_settings, DEFAULT_GATEWAY, TUN_DNS, TUN_GATEWAY, TUN_IPV4, TUN_NETMASK};
 use socks::SocksProxyManager;
-use std::{net::SocketAddr, sync::Arc};
+use std::{collections::VecDeque, net::SocketAddr, sync::Arc};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::TcpStream,
@@ -58,7 +58,7 @@ where
                 let info = SessionInfo::new(tcp.local_addr(), tcp.peer_addr(), IpProtocol::Tcp);
                 let proxy_handler = mgr.new_proxy_handler(info, false).await?;
                 tokio::spawn(async move {
-                    if let Err(err) = handle_tcp_connection(tcp, server_addr, proxy_handler).await {
+                    if let Err(err) = handle_tcp_session(tcp, server_addr, proxy_handler).await {
                         log::error!("{} error \"{}\"", info, err);
                     }
                     log::trace!("Session count {}", TASK_COUNT.fetch_sub(1, Relaxed) - 1);
@@ -67,12 +67,24 @@ where
             IpStackStream::Udp(udp) => {
                 log::trace!("Session count {}", TASK_COUNT.fetch_add(1, Relaxed) + 1);
                 let mut info = SessionInfo::new(udp.local_addr(), udp.peer_addr(), IpProtocol::Udp);
-                if info.dst.port() == DNS_PORT && dns::addr_is_private(&info.dst) {
-                    info.dst.set_ip(dns_addr);
+                if info.dst.port() == DNS_PORT {
+                    if dns::addr_is_private(&info.dst) {
+                        info.dst.set_ip(dns_addr);
+                    }
+                    if args.dns == args::ArgDns::OverTcp {
+                        let proxy_handler = mgr.new_proxy_handler(info, false).await?;
+                        tokio::spawn(async move {
+                            if let Err(err) = handle_dns_over_tcp_session(udp, server_addr, proxy_handler, ipv6_enabled).await {
+                                log::error!("{} error \"{}\"", info, err);
+                            }
+                            log::trace!("Session count {}", TASK_COUNT.fetch_sub(1, Relaxed) - 1);
+                        });
+                        continue;
+                    }
                 }
                 let proxy_handler = mgr.new_proxy_handler(info, true).await?;
                 tokio::spawn(async move {
-                    if let Err(err) = handle_udp_associate_connection(udp, server_addr, proxy_handler, ipv6_enabled).await {
+                    if let Err(err) = handle_udp_associate_session(udp, server_addr, proxy_handler, ipv6_enabled).await {
                         log::error!("{} error \"{}\"", info, err);
                     }
                     log::trace!("Session count {}", TASK_COUNT.fetch_sub(1, Relaxed) - 1);
@@ -82,7 +94,7 @@ where
     }
 }
 
-async fn handle_tcp_connection(
+async fn handle_tcp_session(
     tcp_stack: IpStackTcpStream,
     server_addr: SocketAddr,
     proxy_handler: Arc<Mutex<dyn ProxyHandler>>,
@@ -92,13 +104,13 @@ async fn handle_tcp_connection(
     let session_info = proxy_handler.lock().await.get_session_info();
     log::info!("Beginning {}", session_info);
 
-    let _ = handle_proxy_connection(&mut server, proxy_handler).await?;
+    let _ = handle_proxy_session(&mut server, proxy_handler).await?;
 
     let (mut t_rx, mut t_tx) = tokio::io::split(tcp_stack);
     let (mut s_rx, mut s_tx) = tokio::io::split(server);
 
     let result = tokio::join! {
-         tokio::io::copy(&mut t_rx, &mut s_tx) ,
+         tokio::io::copy(&mut t_rx, &mut s_tx),
          tokio::io::copy(&mut s_rx, &mut t_tx),
     };
     let result = match result {
@@ -111,7 +123,7 @@ async fn handle_tcp_connection(
     Ok(())
 }
 
-async fn handle_udp_associate_connection(
+async fn handle_udp_associate_session(
     mut udp_stack: IpStackUdpStream,
     server_addr: SocketAddr,
     proxy_handler: Arc<Mutex<dyn ProxyHandler>>,
@@ -122,7 +134,7 @@ async fn handle_udp_associate_connection(
     let session_info = proxy_handler.lock().await.get_session_info();
     log::info!("Beginning {}", session_info);
 
-    let udp_addr = handle_proxy_connection(&mut server, proxy_handler).await?;
+    let udp_addr = handle_proxy_session(&mut server, proxy_handler).await?;
     let udp_addr = udp_addr.ok_or("udp associate failed")?;
 
     let mut udp_server = UdpStream::connect(udp_addr).await?;
@@ -176,7 +188,90 @@ async fn handle_udp_associate_connection(
     Ok(())
 }
 
-async fn handle_proxy_connection(server: &mut TcpStream, proxy_handler: Arc<Mutex<dyn ProxyHandler>>) -> crate::Result<Option<SocketAddr>> {
+async fn handle_dns_over_tcp_session(
+    mut udp_stack: IpStackUdpStream,
+    server_addr: SocketAddr,
+    proxy_handler: Arc<Mutex<dyn ProxyHandler>>,
+    ipv6_enabled: bool,
+) -> crate::Result<()> {
+    let mut server = TcpStream::connect(server_addr).await?;
+
+    let session_info = proxy_handler.lock().await.get_session_info();
+    log::info!("Beginning {}", session_info);
+
+    let _ = handle_proxy_session(&mut server, proxy_handler).await?;
+
+    let mut buf1 = [0_u8; 4096];
+    let mut buf2 = [0_u8; 4096];
+    loop {
+        tokio::select! {
+            len = udp_stack.read(&mut buf1) => {
+                let len = len?;
+                if len == 0 {
+                    break;
+                }
+                let buf1 = &buf1[..len];
+
+                _ = dns::parse_data_to_dns_message(buf1, false)?;
+
+                // Insert the DNS message length in front of the payload
+                let len = u16::try_from(buf1.len())?;
+                let mut buf = Vec::with_capacity(std::mem::size_of::<u16>() + usize::from(len));
+                buf.extend_from_slice(&len.to_be_bytes());
+                buf.extend_from_slice(buf1);
+
+                server.write_all(&buf).await?;
+            }
+            len = server.read(&mut buf2) => {
+                let len = len?;
+                if len == 0 {
+                    break;
+                }
+                let mut buf = buf2[..len].to_vec();
+
+                let mut to_send: VecDeque<Vec<u8>> = VecDeque::new();
+                loop {
+                    if buf.len() < 2 {
+                        break;
+                    }
+                    let len = u16::from_be_bytes([buf[0], buf[1]]) as usize;
+                    if buf.len() < len + 2 {
+                        break;
+                    }
+
+                    // remove the length field
+                    let data = buf[2..len + 2].to_vec();
+
+                    let mut message = dns::parse_data_to_dns_message(&data, false)?;
+
+                    let name = dns::extract_domain_from_dns_message(&message)?;
+                    let ip = dns::extract_ipaddr_from_dns_message(&message);
+                    log::trace!("DNS over TCP query result: {} -> {:?}", name, ip);
+
+                    if !ipv6_enabled {
+                        dns::remove_ipv6_entries(&mut message);
+                    }
+
+                    to_send.push_back(message.to_vec()?);
+                    if len + 2 == buf.len() {
+                        break;
+                    }
+                    buf = buf[len + 2..].to_vec();
+                }
+
+                while let Some(packet) = to_send.pop_front() {
+                    udp_stack.write_all(&packet).await?;
+                }
+            }
+        }
+    }
+
+    log::info!("Ending {}", session_info);
+
+    Ok(())
+}
+
+async fn handle_proxy_session(server: &mut TcpStream, proxy_handler: Arc<Mutex<dyn ProxyHandler>>) -> crate::Result<Option<SocketAddr>> {
     let mut launched = false;
     let mut proxy_handler = proxy_handler.lock().await;
     let dir = OutgoingDirection::ToServer;
