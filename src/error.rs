@@ -27,6 +27,12 @@ pub enum Error {
     #[error("DnsProtoError {0:?}")]
     DnsProto(#[from] trust_dns_proto::error::ProtoError),
 
+    #[error("httparse::Error {0:?}")]
+    Httparse(#[from] httparse::Error),
+
+    #[error("digest_auth::Error {0:?}")]
+    DigestAuth(#[from] digest_auth::Error),
+
     #[cfg(target_os = "android")]
     #[error("jni::errors::Error {0:?}")]
     Jni(#[from] jni::errors::Error),

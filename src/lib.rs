@@ -1,6 +1,7 @@
 use crate::{
     args::ProxyType,
     directions::{IncomingDataEvent, IncomingDirection, OutgoingDirection},
+    http::HttpManager,
     session_info::{IpProtocol, SessionInfo},
 };
 pub use args::Args;
@@ -21,6 +22,7 @@ mod args;
 mod directions;
 mod dns;
 mod error;
+mod http;
 mod proxy_handler;
 mod route_config;
 mod session_info;
@@ -44,9 +46,7 @@ where
     let mgr = match args.proxy.proxy_type {
         ProxyType::Socks5 => Arc::new(SocksProxyManager::new(server_addr, V5, key)) as Arc<dyn ConnectionManager>,
         ProxyType::Socks4 => Arc::new(SocksProxyManager::new(server_addr, V4, key)) as Arc<dyn ConnectionManager>,
-        ProxyType::Http => {
-            unimplemented!("http proxy is not implemented yet")
-        }
+        ProxyType::Http => Arc::new(HttpManager::new(server_addr, key)) as Arc<dyn ConnectionManager>,
     };
 
     let mut ip_stack = ipstack::IpStack::new(device, mtu, packet_info);
@@ -56,7 +56,7 @@ where
             IpStackStream::Tcp(tcp) => {
                 log::trace!("Session count {}", TASK_COUNT.fetch_add(1, Relaxed) + 1);
                 let info = SessionInfo::new(tcp.local_addr(), tcp.peer_addr(), IpProtocol::Tcp);
-                let proxy_handler = mgr.new_proxy_handler(info, false)?;
+                let proxy_handler = mgr.new_proxy_handler(info, false).await?;
                 tokio::spawn(async move {
                     if let Err(err) = handle_tcp_connection(tcp, server_addr, proxy_handler).await {
                         log::error!("{} error \"{}\"", info, err);
@@ -70,7 +70,7 @@ where
                 if info.dst.port() == DNS_PORT && dns::addr_is_private(&info.dst) {
                     info.dst.set_ip(dns_addr);
                 }
-                let proxy_handler = mgr.new_proxy_handler(info, true)?;
+                let proxy_handler = mgr.new_proxy_handler(info, true).await?;
                 tokio::spawn(async move {
                     if let Err(err) = handle_udp_associate_connection(udp, server_addr, proxy_handler, ipv6_enabled).await {
                         log::error!("{} error \"{}\"", info, err);
@@ -89,7 +89,7 @@ async fn handle_tcp_connection(
 ) -> crate::Result<()> {
     let mut server = TcpStream::connect(server_addr).await?;
 
-    let session_info = proxy_handler.lock().await.get_connection_info();
+    let session_info = proxy_handler.lock().await.get_session_info();
     log::info!("Beginning {}", session_info);
 
     let _ = handle_proxy_connection(&mut server, proxy_handler).await?;
@@ -119,7 +119,7 @@ async fn handle_udp_associate_connection(
 ) -> crate::Result<()> {
     use socks5_impl::protocol::{StreamOperation, UdpHeader};
     let mut server = TcpStream::connect(server_addr).await?;
-    let session_info = proxy_handler.lock().await.get_connection_info();
+    let session_info = proxy_handler.lock().await.get_session_info();
     log::info!("Beginning {}", session_info);
 
     let udp_addr = handle_proxy_connection(&mut server, proxy_handler).await?;
@@ -207,7 +207,7 @@ async fn handle_proxy_connection(server: &mut TcpStream, proxy_handler: Arc<Mute
             direction: IncomingDirection::FromServer,
             buffer: &buf[..len],
         };
-        proxy_handler.push_data(event)?;
+        proxy_handler.push_data(event).await?;
 
         let data = proxy_handler.peek_data(dir).buffer;
         let len = data.len();

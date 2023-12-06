@@ -242,12 +242,13 @@ impl SocksProxyImpl {
     }
 }
 
+#[async_trait::async_trait]
 impl ProxyHandler for SocksProxyImpl {
-    fn get_connection_info(&self) -> SessionInfo {
+    fn get_session_info(&self) -> SessionInfo {
         self.info
     }
 
-    fn push_data(&mut self, event: IncomingDataEvent<'_>) -> std::io::Result<()> {
+    async fn push_data(&mut self, event: IncomingDataEvent<'_>) -> std::io::Result<()> {
         let IncomingDataEvent { direction, buffer } = event;
         match direction {
             IncomingDirection::FromServer => {
@@ -306,8 +307,9 @@ pub(crate) struct SocksProxyManager {
     version: Version,
 }
 
+#[async_trait::async_trait]
 impl ConnectionManager for SocksProxyManager {
-    fn new_proxy_handler(&self, info: SessionInfo, udp_associate: bool) -> std::io::Result<Arc<Mutex<dyn ProxyHandler>>> {
+    async fn new_proxy_handler(&self, info: SessionInfo, udp_associate: bool) -> std::io::Result<Arc<Mutex<dyn ProxyHandler>>> {
         use socks5_impl::protocol::Command::{Connect, UdpAssociate};
         let command = if udp_associate { UdpAssociate } else { Connect };
         let credentials = self.credentials.clone();
