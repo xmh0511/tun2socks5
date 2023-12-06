@@ -45,13 +45,13 @@ pub fn config_settings(bypass_ips: &[IpAddr], tun_name: &str, dns_addr: Option<I
 
 #[cfg(target_os = "linux")]
 pub fn config_settings(bypass_ips: &[IpAddr], tun_name: &str, _dns_addr: Option<IpAddr>) -> std::io::Result<()> {
-    // // sudo ip tuntap add name tun0 mode tun
-    // let args = &["tuntap", "add", "name", tun_name, "mode", "tun"];
-    // run_command("ip", args)?;
+    // sudo ip tuntap add name tun0 mode tun
+    let args = &["tuntap", "add", "name", tun_name, "mode", "tun"];
+    run_command("ip", args)?;
 
-    // // sudo ip link set tun0 up
-    // let args = &["link", "set", tun_name, "up"];
-    // run_command("ip", args)?;
+    // sudo ip link set tun0 up
+    let args = &["link", "set", tun_name, "up"];
+    run_command("ip", args)?;
 
     // sudo ip route add "${bypass_ip}" $(ip route | grep '^default' | cut -d ' ' -f 2-)
     let args = &["-c", "ip route | grep '^default' | cut -d ' ' -f 2-"];
@@ -126,9 +126,9 @@ pub fn config_restore(bypass_ips: &[IpAddr], _tun_name: &str) -> std::io::Result
         run_command("route", args)?;
     }
 
-    // // sudo ip link del tun0
-    // let args = &["link", "del", _tun_name];
-    // run_command("ip", args)?;
+    // sudo ip link del tun0
+    let args = &["link", "del", _tun_name];
+    run_command("ip", args)?;
 
     // sudo systemctl restart systemd-resolved.service
     let args = &["restart", "systemd-resolved.service"];

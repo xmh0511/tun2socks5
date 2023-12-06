@@ -22,6 +22,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(target_os = "linux")]
     config.platform(|config| {
         config.packet_information(true);
+        config.apply_settings(false);
     });
 
     #[cfg(target_os = "windows")]
@@ -29,25 +30,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config.initialize(Some(12324323423423434234_u128));
     });
 
+    #[allow(unused_mut, unused_assignments)]
+    let mut setup = true;
+
+    #[cfg(target_os = "linux")]
+    {
+        setup = args.setup;
+        if setup {
+            config_settings(&bypass_ips, &tun_name, Some(args.dns_addr))?;
+        }
+    }
+
     let device = tun::create_as_async(&config)?;
 
-    config_settings(&args.bypass, &tun_name, Some(args.dns_addr))?;
+    #[cfg(not(target_os = "linux"))]
+    if setup {
+        config_settings(&bypass_ips, &tun_name, Some(args.dns_addr))?;
+    }
 
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<()>(1);
+    let (tx, rx) = tokio::sync::mpsc::channel::<()>(1);
     ctrlc2::set_async_handler(async move {
         tx.send(()).await.expect("Send exit signal");
     })
     .await;
 
-    tokio::spawn(async move {
-        main_entry(device, MTU, true, args).await.unwrap();
-    });
+    if let Err(err) = main_entry(device, MTU, true, args, rx).await {
+        log::trace!("main_entry error {}", err);
+    }
 
-    rx.recv().await.expect("Receive signal failed");
-    log::info!("");
-    log::info!("Ctrl-C recieved, exiting...");
-
-    config_restore(&bypass_ips, &tun_name)?;
+    if setup {
+        config_restore(&bypass_ips, &tun_name)?;
+    }
 
     Ok(())
 }

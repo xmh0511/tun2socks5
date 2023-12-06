@@ -14,7 +14,7 @@ use std::{collections::VecDeque, net::SocketAddr, sync::Arc};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::TcpStream,
-    sync::Mutex,
+    sync::{mpsc::Receiver, Mutex},
 };
 use udp_stream::UdpStream;
 
@@ -33,7 +33,7 @@ const DNS_PORT: u16 = 53;
 static TASK_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 use std::sync::atomic::Ordering::Relaxed;
 
-pub async fn main_entry<D>(device: D, mtu: u16, packet_info: bool, args: Args) -> crate::Result<()>
+pub async fn main_entry<D>(device: D, mtu: u16, packet_info: bool, args: Args, mut quit: Receiver<()>) -> crate::Result<()>
 where
     D: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
@@ -52,46 +52,56 @@ where
     let mut ip_stack = ipstack::IpStack::new(device, mtu, packet_info);
 
     loop {
-        match ip_stack.accept().await? {
-            IpStackStream::Tcp(tcp) => {
-                log::trace!("Session count {}", TASK_COUNT.fetch_add(1, Relaxed) + 1);
-                let info = SessionInfo::new(tcp.local_addr(), tcp.peer_addr(), IpProtocol::Tcp);
-                let proxy_handler = mgr.new_proxy_handler(info, false).await?;
-                tokio::spawn(async move {
-                    if let Err(err) = handle_tcp_session(tcp, server_addr, proxy_handler).await {
-                        log::error!("{} error \"{}\"", info, err);
-                    }
-                    log::trace!("Session count {}", TASK_COUNT.fetch_sub(1, Relaxed) - 1);
-                });
+        tokio::select! {
+            _ = quit.recv() => {
+                log::info!("");
+                log::info!("Ctrl-C recieved, exiting...");
+                break;
             }
-            IpStackStream::Udp(udp) => {
-                log::trace!("Session count {}", TASK_COUNT.fetch_add(1, Relaxed) + 1);
-                let mut info = SessionInfo::new(udp.local_addr(), udp.peer_addr(), IpProtocol::Udp);
-                if info.dst.port() == DNS_PORT {
-                    if dns::addr_is_private(&info.dst) {
-                        info.dst.set_ip(dns_addr);
-                    }
-                    if args.dns == args::ArgDns::OverTcp {
+            ip_stack_stream = ip_stack.accept() => {
+                match ip_stack_stream? {
+                    IpStackStream::Tcp(tcp) => {
+                        log::trace!("Session count {}", TASK_COUNT.fetch_add(1, Relaxed) + 1);
+                        let info = SessionInfo::new(tcp.local_addr(), tcp.peer_addr(), IpProtocol::Tcp);
                         let proxy_handler = mgr.new_proxy_handler(info, false).await?;
                         tokio::spawn(async move {
-                            if let Err(err) = handle_dns_over_tcp_session(udp, server_addr, proxy_handler, ipv6_enabled).await {
+                            if let Err(err) = handle_tcp_session(tcp, server_addr, proxy_handler).await {
                                 log::error!("{} error \"{}\"", info, err);
                             }
                             log::trace!("Session count {}", TASK_COUNT.fetch_sub(1, Relaxed) - 1);
                         });
-                        continue;
+                    }
+                    IpStackStream::Udp(udp) => {
+                        log::trace!("Session count {}", TASK_COUNT.fetch_add(1, Relaxed) + 1);
+                        let mut info = SessionInfo::new(udp.local_addr(), udp.peer_addr(), IpProtocol::Udp);
+                        if info.dst.port() == DNS_PORT {
+                            if dns::addr_is_private(&info.dst) {
+                                info.dst.set_ip(dns_addr);
+                            }
+                            if args.dns == args::ArgDns::OverTcp {
+                                let proxy_handler = mgr.new_proxy_handler(info, false).await?;
+                                tokio::spawn(async move {
+                                    if let Err(err) = handle_dns_over_tcp_session(udp, server_addr, proxy_handler, ipv6_enabled).await {
+                                        log::error!("{} error \"{}\"", info, err);
+                                    }
+                                    log::trace!("Session count {}", TASK_COUNT.fetch_sub(1, Relaxed) - 1);
+                                });
+                                continue;
+                            }
+                        }
+                        let proxy_handler = mgr.new_proxy_handler(info, true).await?;
+                        tokio::spawn(async move {
+                            if let Err(err) = handle_udp_associate_session(udp, server_addr, proxy_handler, ipv6_enabled).await {
+                                log::error!("{} error \"{}\"", info, err);
+                            }
+                            log::trace!("Session count {}", TASK_COUNT.fetch_sub(1, Relaxed) - 1);
+                        });
                     }
                 }
-                let proxy_handler = mgr.new_proxy_handler(info, true).await?;
-                tokio::spawn(async move {
-                    if let Err(err) = handle_udp_associate_session(udp, server_addr, proxy_handler, ipv6_enabled).await {
-                        log::error!("{} error \"{}\"", info, err);
-                    }
-                    log::trace!("Session count {}", TASK_COUNT.fetch_sub(1, Relaxed) - 1);
-                });
             }
-        };
+        }
     }
+    Ok(())
 }
 
 async fn handle_tcp_session(
