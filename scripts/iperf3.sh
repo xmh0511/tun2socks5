@@ -42,9 +42,9 @@ ip route add 10.0.0.4 dev tun0
 "$tun2socks5" --proxy socks5://10.0.0.3:10800 &
 
 # Run iperf client through tun2socks5
-iperf3 -c 10.0.0.4
+iperf3 -c 10.0.0.4 -t 10
 
-iperf3 -c 10.0.0.4 -R -P 10
+iperf3 -c 10.0.0.4 -R -P 10 -t 10
 
 # Clean up
 # sudo sh -c "pkill tun2socks5; pkill iperf3; pkill danted; ip link del tun0; ip netns del test"
