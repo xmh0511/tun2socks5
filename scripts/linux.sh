@@ -29,7 +29,9 @@ function core_function() {
         restore
     else
         trap 'echo "" && echo "tun2socks5 exited with code: $?" && restore' EXIT
-        ./target/debug/tun2socks5 --tun tun0 --proxy "${PROXY_TYPE}://${PROXY_IP}:${PROXY_PORT}"
+        local SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        local APP_BIN_PATH="${SCRIPT_DIR}/../target/release/tun2socks5"
+        "${APP_BIN_PATH}" --tun tun0 --proxy "${PROXY_TYPE}://${PROXY_IP}:${PROXY_PORT}" -v trace
     fi
 }
 

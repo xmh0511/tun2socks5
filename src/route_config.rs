@@ -154,13 +154,11 @@ pub fn run_command(command: &str, args: &[&str]) -> std::io::Result<Vec<u8>> {
 
 #[cfg(windows)]
 pub(crate) fn get_default_gateway() -> std::io::Result<IpAddr> {
-    let gateways = run_command(
-        "powershell",
-        &[
-            "-Command",
-            "Get-WmiObject -Class Win32_NetworkAdapterConfiguration -Filter IPEnabled=TRUE | ForEach-Object { $_.DefaultIPGateway }",
-        ],
-    )?;
+    let args = &[
+        "-Command",
+        "Get-WmiObject -Class Win32_NetworkAdapterConfiguration -Filter IPEnabled=TRUE | ForEach-Object { $_.DefaultIPGateway }",
+    ];
+    let gateways = run_command("powershell", args)?;
 
     let stdout = String::from_utf8_lossy(&gateways).into_owned();
     let lines: Vec<&str> = stdout.lines().collect();
