@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::net::{IpAddr, Ipv4Addr};
 
 pub const TUN_IPV4: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 33));
@@ -91,8 +89,48 @@ pub fn config_settings(bypass_ips: &[IpAddr], tun_name: &str, _dns_addr: Option<
 }
 
 #[cfg(target_os = "macos")]
-pub fn config_settings(_bypass_ips: &[IpAddr], _tun_name: &str, _dns_addr: Option<IpAddr>) -> std::io::Result<()> {
-    unimplemented!()
+pub fn config_settings(bypass_ips: &[IpAddr], tun_name: &str, _dns_addr: Option<IpAddr>) -> std::io::Result<()> {
+    // 0. Save the old gateway
+    let old_gateway = get_default_gateway()?;
+    unsafe {
+        DEFAULT_GATEWAY = Some(old_gateway);
+    }
+    let old_gateway = old_gateway.to_string();
+
+    let unspecified = Ipv4Addr::UNSPECIFIED.to_string();
+
+    // 1. Set up the address and netmask and gateway of the interface
+    // Command: `sudo ifconfig tun_name 10.0.0.33 10.0.0.1 netmask 255.255.255.0`
+    let tun_ip = TUN_IPV4.to_string();
+    let tun_netmask = TUN_NETMASK.to_string();
+    let tun_gateway = TUN_GATEWAY.to_string();
+    let args = &[tun_name, &tun_ip, &tun_gateway, "netmask", &tun_netmask];
+    run_command("ifconfig", args)?;
+
+    // 2. Remove the default route
+    // Command: `sudo route delete 0.0.0.0`
+    let args = &["delete", &unspecified];
+    run_command("route", args)?;
+
+    // 3. Set the gateway `10.0.0.1` as the default route
+    // Command: `sudo route add -net 0.0.0.0 10.0.0.1`
+    let args = &["add", "-net", &unspecified, &tun_gateway];
+    run_command("route", args)?;
+
+    // 4. Route the bypass ip to the old gateway
+    // Command: `sudo route add bypass_ip/32 old_gateway`
+    for bypass_ip in bypass_ips {
+        let args = &["add", &bypass_ip.to_string(), &old_gateway];
+        run_command("route", args)?;
+    }
+
+    // 5. Set the DNS server to a reserved IP address
+    // Command: `sudo sh -c "echo nameserver 198.18.0.1 > /etc/resolv.conf"`
+    let file = std::fs::OpenOptions::new().write(true).truncate(true).open("/etc/resolv.conf")?;
+    let mut writer = std::io::BufWriter::new(file);
+    use std::io::Write;
+    writeln!(writer, "nameserver 198.18.0.1\n")?;
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -119,7 +157,7 @@ pub fn config_restore(_bypass_ips: &[IpAddr], _tun_name: &str) -> std::io::Resul
 }
 
 #[cfg(target_os = "linux")]
-pub fn config_restore(bypass_ips: &[IpAddr], _tun_name: &str) -> std::io::Result<()> {
+pub fn config_restore(bypass_ips: &[IpAddr], tun_name: &str) -> std::io::Result<()> {
     // sudo route del bypass_ip
     for bypass_ip in bypass_ips {
         let args = &["del", &bypass_ip.to_string()];
@@ -127,7 +165,7 @@ pub fn config_restore(bypass_ips: &[IpAddr], _tun_name: &str) -> std::io::Result
     }
 
     // sudo ip link del tun0
-    let args = &["link", "del", _tun_name];
+    let args = &["link", "del", tun_name];
     run_command("ip", args)?;
 
     // sudo systemctl restart systemd-resolved.service
@@ -139,7 +177,31 @@ pub fn config_restore(bypass_ips: &[IpAddr], _tun_name: &str) -> std::io::Result
 
 #[cfg(target_os = "macos")]
 pub fn config_restore(_bypass_ips: &[IpAddr], _tun_name: &str) -> std::io::Result<()> {
-    unimplemented!()
+    if unsafe { DEFAULT_GATEWAY.is_none() } {
+        return Ok(());
+    }
+    let err = std::io::Error::new(std::io::ErrorKind::Other, "No default gateway found");
+    let old_gateway = unsafe { DEFAULT_GATEWAY.take() }.ok_or(err)?.to_string();
+    let unspecified = Ipv4Addr::UNSPECIFIED.to_string();
+
+    // 1. Remove current adapter's route
+    // command: `sudo route delete 0.0.0.0`
+    let args = &["delete", &unspecified];
+    run_command("route", args)?;
+
+    // 2. Add back the old gateway route
+    // command: `sudo route add -net 0.0.0.0 old_gateway`
+    let args = &["add", "-net", &unspecified, &old_gateway];
+    run_command("route", args)?;
+
+    // 3. Restore DNS server to the old gateway
+    // command: `sudo sh -c "echo nameserver old_gateway > /etc/resolv.conf"`
+    let file = std::fs::OpenOptions::new().write(true).truncate(true).open("/etc/resolv.conf")?;
+    let mut writer = std::io::BufWriter::new(file);
+    use std::io::Write;
+    writeln!(writer, "nameserver {}\n", old_gateway)?;
+
+    Ok(())
 }
 
 pub fn run_command(command: &str, args: &[&str]) -> std::io::Result<Vec<u8>> {
@@ -185,6 +247,7 @@ pub(crate) fn get_default_gateway() -> std::io::Result<IpAddr> {
 }
 
 #[cfg(target_os = "linux")]
+#[allow(dead_code)]
 pub(crate) fn get_default_gateway() -> std::io::Result<IpAddr> {
     // Command: sh -c "ip route | grep default | awk '{print $3}'"
     let args = &["-c", "ip route | grep default | awk '{print $3}'"];
@@ -196,5 +259,10 @@ pub(crate) fn get_default_gateway() -> std::io::Result<IpAddr> {
 
 #[cfg(target_os = "macos")]
 pub(crate) fn get_default_gateway() -> std::io::Result<IpAddr> {
-    unimplemented!()
+    // Command: `netstat -rn | grep default | grep -E -o '[0-9\.]+' | head -n 1`
+    let args = &["-c", "netstat -rn | grep default | grep -E -o '[0-9\\.]+' | head -n 1"];
+    let out = run_command("sh", args)?;
+    let stdout = String::from_utf8_lossy(&out).into_owned();
+    let addr = <IpAddr as std::str::FromStr>::from_str(stdout.trim()).map_err(crate::Error::from)?;
+    Ok(addr)
 }

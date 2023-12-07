@@ -43,7 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let device = tun::create_as_async(&config)?;
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     if setup {
         config_settings(&bypass_ips, &tun_name, Some(args.dns_addr))?;
     }
@@ -58,6 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         log::trace!("main_entry error {}", err);
     }
 
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
     if setup {
         config_restore(&bypass_ips, &tun_name)?;
     }
