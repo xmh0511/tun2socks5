@@ -1,15 +1,11 @@
-#![allow(dead_code)]
-
-use std::{
-    net::{IpAddr, Ipv4Addr, SocketAddr},
-    str::FromStr,
-};
+use std::{net::IpAddr, str::FromStr};
 use trust_dns_proto::op::MessageType;
 use trust_dns_proto::{
     op::{Message, ResponseCode},
     rr::{record_type::RecordType, Name, RData, Record},
 };
 
+#[allow(dead_code)]
 pub fn build_dns_response(mut request: Message, domain: &str, ip: IpAddr, ttl: u32) -> Result<Message, String> {
     let record = match ip {
         IpAddr::V4(ip) => {
@@ -80,18 +76,4 @@ pub fn parse_data_to_dns_message(data: &[u8], used_by_tcp: bool) -> Result<Messa
     }
     let message = Message::from_vec(data).map_err(|e| e.to_string())?;
     Ok(message)
-}
-
-// FIXME: use IpAddr::is_global() instead when it's stable
-pub fn addr_is_private(addr: &SocketAddr) -> bool {
-    fn is_benchmarking(addr: &Ipv4Addr) -> bool {
-        addr.octets()[0] == 198 && (addr.octets()[1] & 0xfe) == 18
-    }
-    fn addr_v4_is_private(addr: &Ipv4Addr) -> bool {
-        is_benchmarking(addr) || addr.is_private() || addr.is_loopback() || addr.is_link_local()
-    }
-    match addr {
-        SocketAddr::V4(addr) => addr_v4_is_private(addr.ip()),
-        SocketAddr::V6(_) => false,
-    }
 }
