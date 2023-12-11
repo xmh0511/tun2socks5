@@ -17,7 +17,7 @@ use udp_stream::UdpStream;
 pub use {
     args::Args,
     error::{Error, Result},
-    route_config::{config_restore, config_settings, DEFAULT_GATEWAY, TUN_DNS, TUN_GATEWAY, TUN_IPV4, TUN_NETMASK},
+    route_config::{config_restore, config_settings, TUN_DNS, TUN_GATEWAY, TUN_IPV4, TUN_NETMASK},
 };
 
 mod args;
