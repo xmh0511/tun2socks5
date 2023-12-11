@@ -1,7 +1,9 @@
 #![cfg(target_os = "windows")]
 
-use crate::route_config::{run_command, DEFAULT_GATEWAY, TUN_DNS, TUN_GATEWAY};
+use crate::route_config::{run_command, TUN_DNS, TUN_GATEWAY};
 use std::net::{IpAddr, Ipv4Addr};
+
+pub(crate) static mut ORIGINAL_GATEWAY: Option<IpAddr> = None;
 
 pub fn config_settings(bypass_ips: &[IpAddr], tun_name: &str, dns_addr: Option<IpAddr>) -> std::io::Result<()> {
     // 1. Setup the adapter's DNS
@@ -20,15 +22,15 @@ pub fn config_settings(bypass_ips: &[IpAddr], tun_name: &str, dns_addr: Option<I
     run_command("route", args)?;
     log::info!("route {:?}", args);
 
-    let old_gateway = get_default_gateway()?;
+    let original_gateway = get_default_gateway()?;
     unsafe {
-        DEFAULT_GATEWAY = Some(old_gateway);
+        ORIGINAL_GATEWAY = Some(original_gateway);
     }
 
-    // 3. route the bypass ip to the old gateway
-    // command: `route add bypass_ip old_gateway metric 1`
+    // 3. route the bypass ip to the original gateway
+    // command: `route add bypass_ip original_gateway metric 1`
     for bypass_ip in bypass_ips {
-        let args = &["add", &bypass_ip.to_string(), &old_gateway.to_string(), "metric", "1"];
+        let args = &["add", &bypass_ip.to_string(), &original_gateway.to_string(), "metric", "1"];
         run_command("route", args)?;
         log::info!("route {:?}", args);
     }
@@ -37,11 +39,11 @@ pub fn config_settings(bypass_ips: &[IpAddr], tun_name: &str, dns_addr: Option<I
 }
 
 pub fn config_restore(_bypass_ips: &[IpAddr], _tun_name: &str) -> std::io::Result<()> {
-    if unsafe { DEFAULT_GATEWAY.is_none() } {
+    if unsafe { ORIGINAL_GATEWAY.is_none() } {
         return Ok(());
     }
     let err = std::io::Error::new(std::io::ErrorKind::Other, "No default gateway found");
-    let old_gateway = unsafe { DEFAULT_GATEWAY.take() }.ok_or(err)?;
+    let original_gateway = unsafe { ORIGINAL_GATEWAY.take() }.ok_or(err)?;
     let unspecified = Ipv4Addr::UNSPECIFIED.to_string();
 
     // 1. Remove current adapter's route
@@ -49,10 +51,10 @@ pub fn config_restore(_bypass_ips: &[IpAddr], _tun_name: &str) -> std::io::Resul
     let args = &["delete", &unspecified, "mask", &unspecified];
     run_command("route", args)?;
 
-    // 2. Add back the old gateway route
-    // command: `route add 0.0.0.0 mask 0.0.0.0 old_gateway metric 200`
-    let old_gateway = old_gateway.to_string();
-    let args = &["add", &unspecified, "mask", &unspecified, &old_gateway, "metric", "200"];
+    // 2. Add back the original gateway route
+    // command: `route add 0.0.0.0 mask 0.0.0.0 original_gateway metric 200`
+    let original_gateway = original_gateway.to_string();
+    let args = &["add", &unspecified, "mask", &unspecified, &original_gateway, "metric", "200"];
     run_command("route", args)?;
 
     Ok(())

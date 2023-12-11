@@ -1,6 +1,6 @@
 #![cfg(target_os = "linux")]
 
-use crate::route_config::run_command;
+use crate::route_config::{run_command, DNS_SYS_CFG_FILE};
 use std::net::IpAddr;
 
 pub fn config_settings(bypass_ips: &[IpAddr], tun_name: &str, _dns_addr: Option<IpAddr>) -> std::io::Result<()> {
@@ -41,7 +41,7 @@ pub fn config_settings(bypass_ips: &[IpAddr], tun_name: &str, _dns_addr: Option<
     run_command("ip", args)?;
 
     // sudo sh -c "echo nameserver 198.18.0.1 > /etc/resolv.conf"
-    let file = std::fs::OpenOptions::new().write(true).truncate(true).open("/etc/resolv.conf")?;
+    let file = std::fs::OpenOptions::new().write(true).truncate(true).open(DNS_SYS_CFG_FILE)?;
     let mut writer = std::io::BufWriter::new(file);
     use std::io::Write;
     writeln!(writer, "nameserver 198.18.0.1")?;

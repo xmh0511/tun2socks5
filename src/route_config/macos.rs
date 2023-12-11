@@ -2,37 +2,63 @@
 
 use crate::{
     private_ip::is_private_ip,
-    route_config::{run_command, DEFAULT_GATEWAY, ORIGINAL_DNS_SERVERS, TUN_DNS, TUN_GATEWAY, TUN_IPV4, TUN_NETMASK},
+    route_config::{run_command, DNS_SYS_CFG_FILE, TUN_DNS, TUN_GATEWAY, TUN_IPV4, TUN_NETMASK},
 };
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::IpAddr;
+
+static mut ORIGINAL_DNS_SERVERS: Vec<IpAddr> = Vec::new();
+static mut ORIGINAL_GATEWAY: Option<IpAddr> = None;
+static mut ORIGINAL_GW_SCOPE: Option<String> = None;
 
 pub fn config_settings(bypass_ips: &[IpAddr], tun_name: &str, dns_addr: Option<IpAddr>) -> std::io::Result<()> {
-    // 0. Save the old gateway
-    let (old_gateway, _iface) = get_default_gateway()?;
+    // 0. Save the original gateway and scope
+    let (original_gateway, orig_gw_iface) = get_default_gateway()?;
     unsafe {
-        DEFAULT_GATEWAY = Some(old_gateway);
+        ORIGINAL_GATEWAY = Some(original_gateway);
+        ORIGINAL_GW_SCOPE = Some(orig_gw_iface.clone());
     }
-    let old_gateway = old_gateway.to_string();
+    let original_gateway = original_gateway.to_string();
 
-    let dns_servers = get_system_dns_servers()?;
+    let dns_servers = extract_system_dns_servers()?;
     unsafe {
         ORIGINAL_DNS_SERVERS = dns_servers.clone();
     }
 
-    let unspecified = Ipv4Addr::UNSPECIFIED.to_string();
     let tun_ip = TUN_IPV4.to_string();
     let tun_netmask = TUN_NETMASK.to_string();
     let tun_gateway = TUN_GATEWAY.to_string();
+
+    // sudo sysctl -w net.inet.ip.forwarding=1
+    run_command("sysctl", &["-w", "net.inet.ip.forwarding=1"])?;
+
+    // Set up the address and netmask and gateway of the interface
+    // Command: `sudo ifconfig tun_name 10.0.0.33 10.0.0.1 netmask 255.255.255.0`
+    let args = &[tun_name, &tun_ip, &tun_gateway, "netmask", &tun_netmask];
+    run_command("ifconfig", args)?;
 
     configure_system_proxy(true, None, Some(1080))?;
     if dns_servers.is_empty() || is_private_ip(dns_servers[0]) {
         configure_dns_servers(&[dns_addr.unwrap_or(TUN_DNS)])?;
     }
 
-    // 1. Set up the address and netmask and gateway of the interface
-    // Command: `sudo ifconfig tun_name 10.0.0.33 10.0.0.1 netmask 255.255.255.0`
-    let args = &[tun_name, &tun_ip, &tun_gateway, "netmask", &tun_netmask];
-    run_command("ifconfig", args)?;
+    // route delete default
+    // route delete default -ifscope original_gw_scope
+    // route add default tun_gateway
+    // route add default original_gateway -ifscope original_gw_scope
+    run_command("route", &["delete", "default"])?;
+    run_command("route", &["delete", "default", "-ifscope", &orig_gw_iface])?;
+    run_command("route", &["add", "default", &tun_gateway])?;
+    run_command("route", &["add", "default", &original_gateway, "-ifscope", &orig_gw_iface])?;
+
+    // Route the bypass ip to the original gateway
+    // Command: `sudo route add bypass_ip/32 original_gateway`
+    for bypass_ip in bypass_ips {
+        let args = &["add", &bypass_ip.to_string(), &original_gateway];
+        run_command("route", args)?;
+    }
+
+    /*
+    let unspecified = Ipv4Addr::UNSPECIFIED.to_string();
 
     // 2. Remove the default route
     // Command: `sudo route delete 0.0.0.0`
@@ -43,57 +69,63 @@ pub fn config_settings(bypass_ips: &[IpAddr], tun_name: &str, dns_addr: Option<I
     // Command: `sudo route add -net 0.0.0.0 10.0.0.1`
     let args = &["add", "-net", &unspecified, &tun_gateway];
     run_command("route", args)?;
-
-    // 4. Route the bypass ip to the old gateway
-    // Command: `sudo route add bypass_ip/32 old_gateway`
-    for bypass_ip in bypass_ips {
-        let args = &["add", &bypass_ip.to_string(), &old_gateway];
-        run_command("route", args)?;
-    }
+    // */
 
     // 5. Set the DNS server to a reserved IP address
-    // Command: `sudo sh -c "echo nameserver 198.18.0.1 > /etc/resolv.conf"`
-    let file = std::fs::OpenOptions::new().write(true).truncate(true).open("/etc/resolv.conf")?;
+    // Command: `sudo sh -c "echo nameserver 10.0.0.1 > /etc/resolv.conf"`
+    let file = std::fs::OpenOptions::new().write(true).truncate(true).open(DNS_SYS_CFG_FILE)?;
     let mut writer = std::io::BufWriter::new(file);
     use std::io::Write;
 
-    writeln!(writer, "nameserver 198.18.0.1\n")?;
+    writeln!(writer, "nameserver {}\n", tun_gateway)?;
     Ok(())
 }
 
 pub fn config_restore(_bypass_ips: &[IpAddr], _tun_name: &str) -> std::io::Result<()> {
-    if unsafe { DEFAULT_GATEWAY.is_none() } {
+    if unsafe { ORIGINAL_GATEWAY.is_none() } {
         return Ok(());
     }
 
     let original_dns_servers = unsafe { std::mem::take(&mut ORIGINAL_DNS_SERVERS) };
 
-    let err = std::io::Error::new(std::io::ErrorKind::Other, "No default gateway found");
-    let old_gateway = unsafe { DEFAULT_GATEWAY.take() }.ok_or(err)?.to_string();
-    let unspecified = Ipv4Addr::UNSPECIFIED.to_string();
+    let err = std::io::Error::new(std::io::ErrorKind::Other, "No original gateway found");
+    let original_gateway = unsafe { ORIGINAL_GATEWAY.take() }.ok_or(err)?.to_string();
+    let err = std::io::Error::new(std::io::ErrorKind::Other, "No original gateway scope found");
+    let original_gw_scope = unsafe { ORIGINAL_GW_SCOPE.take() }.ok_or(err)?;
 
     configure_system_proxy(false, None, None)?;
     if !original_dns_servers.is_empty() {
         configure_dns_servers(&original_dns_servers)?;
     }
 
+    // route delete default
+    // route delete default -ifscope original_gw_scope
+    // route add default original_gateway
+    run_command("route", &["delete", "default"])?;
+    run_command("route", &["delete", "default", "-ifscope", &original_gw_scope])?;
+    run_command("route", &["add", "default", &original_gateway])?;
+
+    /*
+    let unspecified = Ipv4Addr::UNSPECIFIED.to_string();
+
     // 1. Remove current adapter's route
     // command: `sudo route delete 0.0.0.0`
     let args = &["delete", &unspecified];
     run_command("route", args)?;
 
-    // 2. Add back the old gateway route
-    // command: `sudo route add -net 0.0.0.0 old_gateway`
-    let args = &["add", "-net", &unspecified, &old_gateway];
+    // 2. Add back the original gateway route
+    // command: `sudo route add -net 0.0.0.0 original_gateway`
+    let args = &["add", "-net", &unspecified, &original_gateway];
     run_command("route", args)?;
+    // */
 
-    // 3. Restore DNS server to the old gateway
-    // command: `sudo sh -c "echo nameserver old_gateway > /etc/resolv.conf"`
-    let file = std::fs::OpenOptions::new().write(true).truncate(true).open("/etc/resolv.conf")?;
+    // 3. Restore DNS server to the original gateway
+    // command: `sudo sh -c "echo nameserver original_gateway > /etc/resolv.conf"`
+    let file = std::fs::OpenOptions::new().write(true).truncate(true).open(DNS_SYS_CFG_FILE)?;
     let mut writer = std::io::BufWriter::new(file);
     use std::io::Write;
 
-    writeln!(writer, "nameserver {}\n", old_gateway)?;
+    writeln!(writer, "nameserver {}\n", original_gateway)?;
 
     Ok(())
 }
@@ -151,9 +183,9 @@ pub(crate) fn configure_dns_servers(dns_servers: &[IpAddr]) -> std::io::Result<(
     Ok(())
 }
 
-fn get_system_dns_servers() -> std::io::Result<Vec<IpAddr>> {
+fn extract_system_dns_servers() -> std::io::Result<Vec<IpAddr>> {
     let mut buf = Vec::with_capacity(4096);
-    let mut f = std::fs::File::open("/etc/resolv.conf")?;
+    let mut f = std::fs::File::open(DNS_SYS_CFG_FILE)?;
     use std::io::Read;
     f.read_to_end(&mut buf)?;
     let cfg = resolv_conf::Config::parse(&buf).map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
@@ -234,12 +266,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_set_dns_servers() {
-        let v = get_system_dns_servers().unwrap();
+    fn test_configure_dns_servers() {
+        let v = extract_system_dns_servers().unwrap();
         println!("{:?}", v);
 
         // let servers = ["8.8.8.8".parse().unwrap(), "8.8.4.4".parse().unwrap()];
-        // set_dns_servers(&servers).unwrap();
+        // configure_dns_servers(&servers).unwrap();
 
         configure_system_proxy(true, Some(1081), Some(1080)).unwrap();
         configure_system_proxy(false, None, None).unwrap();
