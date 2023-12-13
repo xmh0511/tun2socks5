@@ -68,11 +68,28 @@ pub fn config_restore(bypass_ips: &[IpAddr], tun_name: &str) -> std::io::Result<
 }
 
 #[allow(dead_code)]
-pub(crate) fn get_default_gateway() -> std::io::Result<IpAddr> {
+pub(crate) fn get_default_gateway() -> std::io::Result<(IpAddr, String)> {
     // Command: sh -c "ip route | grep default | awk '{print $3}'"
-    let args = &["-c", "ip route | grep default | awk '{print $3}'"];
-    let out = run_command("sh", args)?;
+    let cmd = "ip route | grep default | awk '{print $3}'";
+    let out = run_command("sh", &["-c", cmd])?;
     let stdout = String::from_utf8_lossy(&out).into_owned();
     let addr = <IpAddr as std::str::FromStr>::from_str(stdout.trim()).map_err(crate::Error::from)?;
-    Ok(addr)
+
+    let cmd = "ip route | grep default | awk '{print $5}'";
+    let out = run_command("sh", &["-c", cmd])?;
+    let stdout = String::from_utf8_lossy(&out).into_owned();
+    let iface = stdout.trim().to_string();
+
+    Ok((addr, iface))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_default_gateway() {
+        let (addr, iface) = get_default_gateway().unwrap();
+        println!("addr: {:?}, iface: {}", addr, iface);
+    }
 }
