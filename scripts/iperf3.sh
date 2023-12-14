@@ -39,12 +39,12 @@ sleep 1
 ip tuntap add name tun0 mode tun
 ip link set tun0 up
 ip route add 10.0.0.4 dev tun0
-"$tun2socks5" --proxy socks5://10.0.0.3:10800 &
+"$tun2socks5" --proxy socks5://10.0.0.3:10800 -v trace &
 
 # Run iperf client through tun2socks5
-iperf3 -c 10.0.0.4 -t 10
+iperf3 -c 10.0.0.4 -P 10 -t 10
 
-iperf3 -c 10.0.0.4 -R -P 10 -t 10
+iperf3 -c 10.0.0.4 -P 10 -t 10 -R
 
 # Clean up
 # sudo sh -c "pkill tun2socks5; pkill iperf3; pkill danted; ip link del tun0; ip netns del test"

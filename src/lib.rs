@@ -52,7 +52,11 @@ where
         ProxyType::Http => Arc::new(HttpManager::new(server_addr, key)) as Arc<dyn ConnectionManager>,
     };
 
-    let mut ip_stack = ipstack::IpStack::new(device, mtu, packet_info);
+    let mut ipstack_config = ipstack::IpStackConfig::default();
+    ipstack_config.mtu(mtu);
+    ipstack_config.packet_info(packet_info);
+
+    let mut ip_stack = ipstack::IpStack::new(ipstack_config, device);
 
     loop {
         tokio::select! {

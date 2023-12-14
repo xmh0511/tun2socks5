@@ -12,7 +12,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tun_name = args.tun.clone();
     let bypass_ips = args.bypass.clone();
 
-    let default = format!("{}={:?}", module_path!(), args.verbosity);
+    // let default = format!("{}={:?}", module_path!(), args.verbosity);
+    let default = format!("{:?}", args.verbosity);
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(default)).init();
 
     let mut config = tun::Configuration::default();
@@ -54,7 +55,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     })
     .await;
 
-    if let Err(err) = main_entry(device, MTU, true, args, rx).await {
+    let packet_info = cfg!(target_family = "unix");
+    if let Err(err) = main_entry(device, MTU, packet_info, args, rx).await {
         log::trace!("main_entry error {}", err);
     }
 
