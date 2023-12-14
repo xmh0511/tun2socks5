@@ -2,6 +2,7 @@ use crate::{Error, Result};
 use clap::Parser;
 use socks5_impl::protocol::UserKey;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
+use tproxy_config::TUN_NAME;
 
 #[derive(Debug, Clone, Parser)]
 #[command(author, version, about = "tun2socks5 application.", long_about = None)]
@@ -11,7 +12,7 @@ pub struct Args {
     pub proxy: ArgProxy,
 
     /// Name of the tun interface
-    #[arg(short, long, value_name = "name", default_value = if cfg!(target_os = "linux") { "tun0" } else { "utun3" })]
+    #[arg(short, long, value_name = "name", default_value = TUN_NAME)]
     pub tun: String,
 
     /// IPv6 enabled

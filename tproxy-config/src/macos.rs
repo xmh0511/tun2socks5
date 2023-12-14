@@ -1,16 +1,13 @@
 #![cfg(target_os = "macos")]
 
-use crate::{
-    private_ip::is_private_ip,
-    route_config::{run_command, DNS_SYS_CFG_FILE, TUN_DNS, TUN_GATEWAY, TUN_IPV4, TUN_NETMASK},
-};
-use std::net::IpAddr;
+use crate::{is_private_ip, run_command, TproxyArgs, DNS_SYS_CFG_FILE};
+use std::net::{IpAddr, SocketAddr};
 
 static mut ORIGINAL_DNS_SERVERS: Vec<IpAddr> = Vec::new();
 static mut ORIGINAL_GATEWAY: Option<IpAddr> = None;
 static mut ORIGINAL_GW_SCOPE: Option<String> = None;
 
-pub fn config_settings(bypass_ips: &[IpAddr], tun_name: &str, dns_addr: Option<IpAddr>) -> std::io::Result<()> {
+pub fn config_settings(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
     // 0. Save the original gateway and scope
     let (original_gateway, orig_gw_iface) = get_default_gateway()?;
     unsafe {
@@ -24,21 +21,22 @@ pub fn config_settings(bypass_ips: &[IpAddr], tun_name: &str, dns_addr: Option<I
         ORIGINAL_DNS_SERVERS = dns_servers.clone();
     }
 
-    let tun_ip = TUN_IPV4.to_string();
-    let tun_netmask = TUN_NETMASK.to_string();
-    let tun_gateway = TUN_GATEWAY.to_string();
+    let tun_ip = tproxy_args.tun_ip.to_string();
+    let tun_netmask = tproxy_args.tun_netmask.to_string();
+    let tun_gateway = tproxy_args.tun_gateway.to_string();
+    let tun_dns = tproxy_args.tun_dns;
 
     // sudo sysctl -w net.inet.ip.forwarding=1
     run_command("sysctl", &["-w", "net.inet.ip.forwarding=1"])?;
 
     // Set up the address and netmask and gateway of the interface
     // Command: `sudo ifconfig tun_name 10.0.0.33 10.0.0.1 netmask 255.255.255.0`
-    let args = &[tun_name, &tun_ip, &tun_gateway, "netmask", &tun_netmask];
+    let args = &[&tproxy_args.tun_name, &tun_ip, &tun_gateway, "netmask", &tun_netmask];
     run_command("ifconfig", args)?;
 
-    configure_system_proxy(true, None, Some(1080))?;
+    configure_system_proxy(true, None, Some(tproxy_args.proxy_addr))?;
     if dns_servers.is_empty() || is_private_ip(dns_servers[0]) {
-        configure_dns_servers(&[dns_addr.unwrap_or(TUN_DNS)])?;
+        configure_dns_servers(&[tun_dns])?;
     }
 
     // route delete default
@@ -52,7 +50,7 @@ pub fn config_settings(bypass_ips: &[IpAddr], tun_name: &str, dns_addr: Option<I
 
     // Route the bypass ip to the original gateway
     // Command: `sudo route add bypass_ip/32 original_gateway`
-    for bypass_ip in bypass_ips {
+    for bypass_ip in tproxy_args.bypass_ips.iter() {
         let args = &["add", &bypass_ip.to_string(), &original_gateway];
         run_command("route", args)?;
     }
@@ -75,13 +73,13 @@ pub fn config_settings(bypass_ips: &[IpAddr], tun_name: &str, dns_addr: Option<I
     // Command: `sudo sh -c "echo nameserver 10.0.0.1 > /etc/resolv.conf"`
     let file = std::fs::OpenOptions::new().write(true).truncate(true).open(DNS_SYS_CFG_FILE)?;
     let mut writer = std::io::BufWriter::new(file);
-    use std::io::Write;
 
+    use std::io::Write;
     writeln!(writer, "nameserver {}\n", tun_gateway)?;
     Ok(())
 }
 
-pub fn config_restore(_bypass_ips: &[IpAddr], _tun_name: &str) -> std::io::Result<()> {
+pub fn config_restore(_tproxy_args: &TproxyArgs) -> std::io::Result<()> {
     if unsafe { ORIGINAL_GATEWAY.is_none() } {
         return Ok(());
     }
@@ -145,7 +143,8 @@ pub(crate) fn get_default_gateway() -> std::io::Result<(IpAddr, String)> {
     if v.len() != 2 {
         return Err(std::io::Error::new(std::io::ErrorKind::Other, "No default gateway found"));
     }
-    let addr = <IpAddr as std::str::FromStr>::from_str(v[0]).map_err(crate::Error::from)?;
+    use std::str::FromStr;
+    let addr = IpAddr::from_str(v[0]).map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
     Ok((addr, v[1].to_string()))
 }
 
@@ -196,23 +195,25 @@ fn extract_system_dns_servers() -> std::io::Result<Vec<IpAddr>> {
     Ok(dns_servers)
 }
 
-fn configure_system_proxy(state: bool, http_port: Option<u16>, socks_port: Option<u16>) -> std::io::Result<()> {
+fn configure_system_proxy(state: bool, http_proxy: Option<SocketAddr>, socks_proxy: Option<SocketAddr>) -> std::io::Result<()> {
     let state = if state { "on" } else { "off" };
 
-    fn port_and_status(port: Option<u16>) -> (String, &'static str) {
-        match port {
-            Some(port) => (port.to_string(), "on"),
-            None => ("".to_string(), "off"),
+    fn port_and_status(proxy_addr: Option<SocketAddr>) -> (String, String, &'static str) {
+        match proxy_addr {
+            Some(addr) => (addr.ip().to_string(), addr.port().to_string(), "on"),
+            None => ("".to_string(), "".to_string(), "off"),
         }
     }
-    let (http_port, http_port_enabled) = port_and_status(http_port);
-    let (socks_port, socks_port_enabled) = port_and_status(socks_port);
+    let (http_addr, http_port, http_port_enabled) = port_and_status(http_proxy);
+    let (socks_addr, socks_port, socks_port_enabled) = port_and_status(socks_proxy);
 
     let script = format!(
         r#"
     state={}
+    http_addr={}
     http_port={}
     http_port_enabled={}
+    socks_addr={}
     socks_port={}
     socks_port_enabled={}
 
@@ -232,11 +233,11 @@ fn configure_system_proxy(state: bool, http_port: Option<u16>, socks_port: Optio
 
                 if [ "$state" = "on" ]; then
                     if [ "$http_port_enabled" = "on" ]; then
-                        networksetup -setwebproxy "$currentservice" "127.0.0.1" $http_port
-                        networksetup -setsecurewebproxy "$currentservice" "127.0.0.1" $http_port
+                        networksetup -setwebproxy "$currentservice" "$http_addr" $http_port
+                        networksetup -setsecurewebproxy "$currentservice" "$http_addr" $http_port
                     fi
                     if [ "$socks_port_enabled" = "on" ]; then
-                        networksetup -setsocksfirewallproxy "$currentservice" "127.0.0.1" $socks_port
+                        networksetup -setsocksfirewallproxy "$currentservice" "$socks_addr" $socks_port
                     fi
                 elif [ "$state" = "off" ]; then
                     networksetup -setwebproxystate "$currentservice" off
@@ -254,7 +255,7 @@ fn configure_system_proxy(state: bool, http_port: Option<u16>, socks_port: Optio
         exit 1
     fi
     "#,
-        state, http_port, http_port_enabled, socks_port, socks_port_enabled
+        state, http_addr, http_port, http_port_enabled, socks_addr, socks_port, socks_port_enabled
     );
 
     let _r = run_command("sh", &["-c", &script])?;
@@ -273,7 +274,9 @@ mod tests {
         // let servers = ["8.8.8.8".parse().unwrap(), "8.8.4.4".parse().unwrap()];
         // configure_dns_servers(&servers).unwrap();
 
-        configure_system_proxy(true, Some(1081), Some(1080)).unwrap();
+        let http_proxy = "127.0.0.1:1081".parse().unwrap();
+        let socks_proxy = "127.0.0.1:1080".parse().unwrap();
+        configure_system_proxy(true, Some(http_proxy), Some(socks_proxy)).unwrap();
         configure_system_proxy(false, None, None).unwrap();
     }
 }

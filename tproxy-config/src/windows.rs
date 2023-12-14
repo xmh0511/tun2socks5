@@ -1,15 +1,15 @@
 #![cfg(target_os = "windows")]
 
-use crate::route_config::{run_command, TUN_DNS, TUN_GATEWAY};
+use crate::{run_command, TproxyArgs};
 use std::net::{IpAddr, Ipv4Addr};
 
 pub(crate) static mut ORIGINAL_GATEWAY: Option<IpAddr> = None;
 
-pub fn config_settings(bypass_ips: &[IpAddr], tun_name: &str, dns_addr: Option<IpAddr>) -> std::io::Result<()> {
+pub fn config_settings(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
     // 1. Setup the adapter's DNS
     // command: `netsh interface ip set dns "utun3" static 8.8.8.8`
-    let dns_addr = dns_addr.unwrap_or(TUN_DNS);
-    let tun_name = format!("\"{}\"", tun_name);
+    let dns_addr = tproxy_args.tun_dns;
+    let tun_name = format!("\"{}\"", tproxy_args.tun_name);
     let args = &["interface", "ip", "set", "dns", &tun_name, "static", &dns_addr.to_string()];
     run_command("netsh", args)?;
     log::info!("netsh {:?}", args);
@@ -17,7 +17,7 @@ pub fn config_settings(bypass_ips: &[IpAddr], tun_name: &str, dns_addr: Option<I
     // 2. Route all traffic to the adapter, here the destination is adapter's gateway
     // command: `route add 0.0.0.0 mask 0.0.0.0 10.1.0.1 metric 6`
     let unspecified = Ipv4Addr::UNSPECIFIED.to_string();
-    let gateway = TUN_GATEWAY.to_string();
+    let gateway = tproxy_args.tun_gateway.to_string();
     let args = &["add", &unspecified, "mask", &unspecified, &gateway, "metric", "6"];
     run_command("route", args)?;
     log::info!("route {:?}", args);
@@ -29,7 +29,7 @@ pub fn config_settings(bypass_ips: &[IpAddr], tun_name: &str, dns_addr: Option<I
 
     // 3. route the bypass ip to the original gateway
     // command: `route add bypass_ip original_gateway metric 1`
-    for bypass_ip in bypass_ips {
+    for bypass_ip in tproxy_args.bypass_ips.iter() {
         let args = &["add", &bypass_ip.to_string(), &original_gateway.to_string(), "metric", "1"];
         run_command("route", args)?;
         log::info!("route {:?}", args);
@@ -38,13 +38,19 @@ pub fn config_settings(bypass_ips: &[IpAddr], tun_name: &str, dns_addr: Option<I
     Ok(())
 }
 
-pub fn config_restore(_bypass_ips: &[IpAddr], _tun_name: &str) -> std::io::Result<()> {
+pub fn config_restore(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
     if unsafe { ORIGINAL_GATEWAY.is_none() } {
         return Ok(());
     }
     let err = std::io::Error::new(std::io::ErrorKind::Other, "No default gateway found");
     let original_gateway = unsafe { ORIGINAL_GATEWAY.take() }.ok_or(err)?;
     let unspecified = Ipv4Addr::UNSPECIFIED.to_string();
+
+    // 0. delete persistent route
+    // command: `route -p delete 0.0.0.0 mask 0.0.0.0 10.0.0.1`
+    let gateway = tproxy_args.tun_gateway.to_string();
+    let args = &["-p", "delete", &unspecified, "mask", &unspecified, &gateway];
+    run_command("route", args)?;
 
     // 1. Remove current adapter's route
     // command: `route delete 0.0.0.0 mask 0.0.0.0`

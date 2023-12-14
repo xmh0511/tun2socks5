@@ -1,5 +1,6 @@
 use clap::Parser;
-use tun2socks5::{config_restore, config_settings, main_entry, Args, TUN_GATEWAY, TUN_IPV4, TUN_NETMASK};
+use tproxy_config::{config_restore, config_settings, TproxyArgs, TUN_GATEWAY, TUN_IPV4, TUN_NETMASK};
+use tun2socks5::{main_entry, Args};
 
 // const MTU: u16 = 1500;
 const MTU: u16 = u16::MAX;
@@ -31,6 +32,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config.initialize(Some(12324323423423434234_u128));
     });
 
+    let tproxy_args = TproxyArgs::new()
+        .tun_name(&tun_name)
+        .tun_dns(args.dns_addr)
+        .proxy_addr(args.proxy.addr)
+        .bypass_ips(&bypass_ips);
+
     #[allow(unused_mut, unused_assignments)]
     let mut setup = true;
 
@@ -38,7 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         setup = args.setup;
         if setup {
-            config_settings(&bypass_ips, &tun_name, Some(args.dns_addr))?;
+            config_settings(&tproxy_args)?;
         }
     }
 
@@ -46,7 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     if setup {
-        config_settings(&bypass_ips, &tun_name, Some(args.dns_addr))?;
+        config_settings(&tproxy_args)?;
     }
 
     let (tx, rx) = tokio::sync::mpsc::channel::<()>(1);
@@ -62,7 +69,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
     if setup {
-        config_restore(&bypass_ips, &tun_name)?;
+        config_restore(&tproxy_args)?;
     }
 
     Ok(())

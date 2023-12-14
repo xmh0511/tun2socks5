@@ -1,8 +1,11 @@
 mod linux;
 mod macos;
+mod private_ip;
+mod tproxy_args;
 mod windows;
 
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+pub use {private_ip::is_private_ip, tproxy_args::TproxyArgs};
 
 #[cfg(target_os = "linux")]
 pub use {linux::config_restore, linux::config_settings};
@@ -13,6 +16,17 @@ pub use {windows::config_restore, windows::config_settings};
 #[cfg(target_os = "macos")]
 pub use {macos::config_restore, macos::config_settings};
 
+pub const TUN_NAME: &str = if cfg!(target_os = "linux") {
+    "tun0"
+} else if cfg!(target_os = "windows") {
+    "wintun"
+} else if cfg!(target_os = "macos") {
+    "utun3"
+} else {
+    panic!("Unsupported OS")
+};
+pub const TUN_MTU: u16 = 1500;
+pub const PROXY_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 1080);
 pub const TUN_IPV4: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 33));
 pub const TUN_NETMASK: IpAddr = IpAddr::V4(Ipv4Addr::new(255, 255, 255, 0));
 pub const TUN_GATEWAY: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));

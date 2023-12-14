@@ -1,9 +1,10 @@
 #![cfg(target_os = "linux")]
 
-use crate::route_config::{run_command, DNS_SYS_CFG_FILE};
+use crate::{run_command, TproxyArgs, DNS_SYS_CFG_FILE};
 use std::net::IpAddr;
 
-pub fn config_settings(bypass_ips: &[IpAddr], tun_name: &str, _dns_addr: Option<IpAddr>) -> std::io::Result<()> {
+pub fn config_settings(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
+    let tun_name = &tproxy_args.tun_name;
     // sudo ip tuntap add name tun0 mode tun
     let args = &["tuntap", "add", "name", tun_name, "mode", "tun"];
     run_command("ip", args)?;
@@ -16,7 +17,7 @@ pub fn config_settings(bypass_ips: &[IpAddr], tun_name: &str, _dns_addr: Option<
     let args = &["-c", "ip route | grep '^default' | cut -d ' ' -f 2-"];
     let out = run_command("sh", args)?;
     let stdout = String::from_utf8_lossy(&out).into_owned();
-    for bypass_ip in bypass_ips {
+    for bypass_ip in tproxy_args.bypass_ips.iter() {
         let cmd = format!("ip route add {} {}", bypass_ip, stdout.trim());
         let args = &["-c", &cmd];
         if let Err(err) = run_command("sh", args) {
@@ -49,15 +50,15 @@ pub fn config_settings(bypass_ips: &[IpAddr], tun_name: &str, _dns_addr: Option<
     Ok(())
 }
 
-pub fn config_restore(bypass_ips: &[IpAddr], tun_name: &str) -> std::io::Result<()> {
+pub fn config_restore(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
     // sudo route del bypass_ip
-    for bypass_ip in bypass_ips {
+    for bypass_ip in tproxy_args.bypass_ips.iter() {
         let args = &["del", &bypass_ip.to_string()];
         run_command("route", args)?;
     }
 
     // sudo ip link del tun0
-    let args = &["link", "del", tun_name];
+    let args = &["link", "del", &tproxy_args.tun_name];
     run_command("ip", args)?;
 
     // sudo systemctl restart systemd-resolved.service
@@ -73,7 +74,8 @@ pub(crate) fn get_default_gateway() -> std::io::Result<(IpAddr, String)> {
     let cmd = "ip route | grep default | awk '{print $3}'";
     let out = run_command("sh", &["-c", cmd])?;
     let stdout = String::from_utf8_lossy(&out).into_owned();
-    let addr = <IpAddr as std::str::FromStr>::from_str(stdout.trim()).map_err(crate::Error::from)?;
+    use std::str::FromStr;
+    let addr = IpAddr::from_str(stdout.trim()).map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
 
     let cmd = "ip route | grep default | awk '{print $5}'";
     let out = run_command("sh", &["-c", cmd])?;

@@ -13,11 +13,11 @@ use tokio::{
     net::TcpStream,
     sync::{mpsc::Receiver, Mutex},
 };
+use tproxy_config::is_private_ip;
 use udp_stream::UdpStream;
 pub use {
     args::Args,
     error::{Error, Result},
-    route_config::{config_restore, config_settings, TUN_DNS, TUN_GATEWAY, TUN_IPV4, TUN_NETMASK},
 };
 
 mod args;
@@ -25,9 +25,7 @@ mod directions;
 mod dns;
 mod error;
 mod http;
-mod private_ip;
 mod proxy_handler;
-mod route_config;
 mod session_info;
 mod socks;
 
@@ -85,7 +83,7 @@ where
                 log::trace!("Session count {}", TASK_COUNT.fetch_add(1, Relaxed) + 1);
                 let mut info = SessionInfo::new(udp.local_addr(), udp.peer_addr(), IpProtocol::Udp);
                 if info.dst.port() == DNS_PORT {
-                    if private_ip::is_private_ip(info.dst.ip()) {
+                    if is_private_ip(info.dst.ip()) {
                         info.dst.set_ip(dns_addr);
                     }
                     if args.dns == args::ArgDns::OverTcp {
