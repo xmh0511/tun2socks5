@@ -1,6 +1,6 @@
 use clap::Parser;
 use tproxy_config::{config_restore, config_settings, TproxyArgs, TUN_GATEWAY, TUN_IPV4, TUN_NETMASK};
-use tun2socks5::{main_entry, Args};
+use tun2socks5::Args;
 
 // const MTU: u16 = 1500;
 const MTU: u16 = u16::MAX;
@@ -56,14 +56,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config_settings(&tproxy_args)?;
     }
 
-    let (tx, rx) = tokio::sync::mpsc::channel::<()>(1);
+    let tun2socks5 = tun2socks5::Builder::new(device, args).build();
+    let (join_handle, quit) = tun2socks5.start();
+
     ctrlc2::set_async_handler(async move {
-        tx.send(()).await.expect("Send exit signal");
+        quit.stop().await.expect("quit error");
     })
     .await;
 
-    let packet_info = cfg!(target_family = "unix");
-    if let Err(err) = main_entry(device, MTU, packet_info, args, rx).await {
+    if let Err(err) = join_handle.await {
         log::trace!("main_entry error {}", err);
     }
 

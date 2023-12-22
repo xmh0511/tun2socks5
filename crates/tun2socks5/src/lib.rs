@@ -7,11 +7,14 @@ use crate::{
 use ipstack::stream::{IpStackStream, IpStackTcpStream, IpStackUdpStream};
 use proxy_handler::{ConnectionManager, ProxyHandler};
 use socks::SocksProxyManager;
-use std::{collections::VecDeque, net::SocketAddr, sync::Arc};
+use std::{collections::VecDeque, future::Future, net::SocketAddr, pin::Pin, sync::Arc};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::TcpStream,
-    sync::{mpsc::Receiver, Mutex},
+    sync::{
+        mpsc::{error::SendError, Receiver, Sender},
+        Mutex,
+    },
 };
 use tproxy_config::is_private_ip;
 use udp_stream::UdpStream;
@@ -34,7 +37,88 @@ const DNS_PORT: u16 = 53;
 static TASK_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 use std::sync::atomic::Ordering::Relaxed;
 
-pub async fn main_entry<D>(device: D, mtu: u16, packet_info: bool, args: Args, mut quit: Receiver<()>) -> crate::Result<()>
+pub struct Builder<D> {
+    device: D,
+    mtu: Option<u16>,
+    packet_info: Option<bool>,
+    args: Args,
+}
+
+impl<D: AsyncRead + AsyncWrite + Unpin + Send + 'static> Builder<D> {
+    pub fn new(device: D, args: Args) -> Self {
+        Builder {
+            device,
+            args,
+            mtu: None,
+            packet_info: None,
+        }
+    }
+    pub fn mtu(mut self, mtu: u16) -> Self {
+        self.mtu = Some(mtu);
+        self
+    }
+    pub fn packet_info(mut self, packet_info: bool) -> Self {
+        self.packet_info = Some(packet_info);
+        self
+    }
+    pub fn build(self) -> Tun2Socks5<impl Future<Output = crate::Result<()>> + Send + 'static> {
+        let (tx, rx) = tokio::sync::mpsc::channel::<()>(1);
+        Tun2Socks5(
+            run(
+                self.device,
+                self.mtu.unwrap_or(1500),
+                self.packet_info.unwrap_or(cfg!(target_family = "unix")),
+                self.args,
+                rx,
+            ),
+            tx,
+        )
+    }
+}
+
+pub struct Tun2Socks5<F: Future>(F, Sender<()>);
+
+impl<F: Future + Send + 'static> Tun2Socks5<F>
+where
+    F::Output: Send,
+{
+    pub fn start(self) -> (JoinHandle<F::Output>, Quit) {
+        let r = tokio::spawn(self.0);
+        (JoinHandle(r), Quit(self.1))
+    }
+}
+
+pub struct Quit(Sender<()>);
+
+impl Quit {
+    pub async fn stop(&self) -> Result<(), SendError<()>> {
+        self.0.send(()).await
+    }
+}
+
+#[repr(transparent)]
+struct TokioJoinError(tokio::task::JoinError);
+
+impl From<TokioJoinError> for crate::Result<()> {
+    fn from(value: TokioJoinError) -> Self {
+        Err(crate::Error::Io(value.0.into()))
+    }
+}
+
+pub struct JoinHandle<R>(tokio::task::JoinHandle<R>);
+
+impl<R: From<TokioJoinError>> Future for JoinHandle<R> {
+    type Output = R;
+
+    fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
+        match std::task::ready!(Pin::new(&mut self.0).poll(cx)) {
+            Ok(r) => std::task::Poll::Ready(r),
+            Err(e) => std::task::Poll::Ready(TokioJoinError(e).into()),
+        }
+    }
+}
+
+pub async fn run<D>(device: D, mtu: u16, packet_info: bool, args: Args, mut quit: Receiver<()>) -> crate::Result<()>
 where
     D: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
