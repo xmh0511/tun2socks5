@@ -56,8 +56,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config_settings(&tproxy_args)?;
     }
 
-	let tun2socks5 = tun2socks5::Builder::new(device, args).build();
-	let (join_handle,quit) = tun2socks5.start();
+    let tun2socks5 = tun2socks5::Builder::new(device, args).build();
+    let (join_handle, quit) = tun2socks5.start();
 
     ctrlc2::set_async_handler(async move {
         quit.stop().await.expect("quit error");

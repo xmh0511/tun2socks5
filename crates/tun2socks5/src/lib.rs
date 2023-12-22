@@ -99,9 +99,9 @@ impl Quit {
 #[repr(transparent)]
 struct TokioJoinError(tokio::task::JoinError);
 
-impl From<TokioJoinError> for crate::Result<()>{
+impl From<TokioJoinError> for crate::Result<()> {
     fn from(value: TokioJoinError) -> Self {
-       Err(crate::Error::Io(value.0.into()))
+        Err(crate::Error::Io(value.0.into()))
     }
 }
 
@@ -117,7 +117,6 @@ impl<R: From<TokioJoinError>> Future for JoinHandle<R> {
         }
     }
 }
-
 
 pub async fn run<D>(device: D, mtu: u16, packet_info: bool, args: Args, mut quit: Receiver<()>) -> crate::Result<()>
 where
