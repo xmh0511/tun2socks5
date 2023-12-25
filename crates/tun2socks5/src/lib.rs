@@ -4,8 +4,9 @@ use crate::{
     http::HttpManager,
     session_info::{IpProtocol, SessionInfo},
 };
+pub use clap;
 use ipstack::stream::{IpStackStream, IpStackTcpStream, IpStackUdpStream};
-use proxy_handler::{ConnectionManager, ProxyHandler};
+use proxy_handler::{ProxyHandler, ProxyHandlerManager};
 use socks::SocksProxyManager;
 use std::{collections::VecDeque, future::Future, net::SocketAddr, pin::Pin, sync::Arc};
 use tokio::{
@@ -91,7 +92,7 @@ where
 pub struct Quit(Sender<()>);
 
 impl Quit {
-    pub async fn stop(&self) -> Result<(), SendError<()>> {
+    pub async fn trigger(&self) -> Result<(), SendError<()>> {
         self.0.send(()).await
     }
 }
@@ -129,9 +130,9 @@ where
 
     use socks5_impl::protocol::Version::{V4, V5};
     let mgr = match args.proxy.proxy_type {
-        ProxyType::Socks5 => Arc::new(SocksProxyManager::new(server_addr, V5, key)) as Arc<dyn ConnectionManager>,
-        ProxyType::Socks4 => Arc::new(SocksProxyManager::new(server_addr, V4, key)) as Arc<dyn ConnectionManager>,
-        ProxyType::Http => Arc::new(HttpManager::new(server_addr, key)) as Arc<dyn ConnectionManager>,
+        ProxyType::Socks5 => Arc::new(SocksProxyManager::new(server_addr, V5, key)) as Arc<dyn ProxyHandlerManager>,
+        ProxyType::Socks4 => Arc::new(SocksProxyManager::new(server_addr, V4, key)) as Arc<dyn ProxyHandlerManager>,
+        ProxyType::Http => Arc::new(HttpManager::new(server_addr, key)) as Arc<dyn ProxyHandlerManager>,
     };
 
     let mut ipstack_config = ipstack::IpStackConfig::default();

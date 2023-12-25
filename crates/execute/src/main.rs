@@ -1,6 +1,5 @@
-use clap::Parser;
-use tproxy_config::{config_restore, config_settings, TproxyArgs, TUN_GATEWAY, TUN_IPV4, TUN_NETMASK};
-use tun2socks5::Args;
+use tproxy_config::{tproxy_restore, tproxy_settings, TproxyArgs, TUN_GATEWAY, TUN_IPV4, TUN_NETMASK};
+use tun2socks5::{clap::Parser, Args, Builder};
 
 // const MTU: u16 = 1500;
 const MTU: u16 = u16::MAX;
@@ -45,7 +44,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         setup = args.setup;
         if setup {
-            config_settings(&tproxy_args)?;
+            tproxy_settings(&tproxy_args)?;
         }
     }
 
@@ -53,14 +52,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     if setup {
-        config_settings(&tproxy_args)?;
+        tproxy_settings(&tproxy_args)?;
     }
 
-    let tun2socks5 = tun2socks5::Builder::new(device, args).build();
+    let tun2socks5 = Builder::new(device, args).build();
     let (join_handle, quit) = tun2socks5.start();
 
     ctrlc2::set_async_handler(async move {
-        quit.stop().await.expect("quit error");
+        quit.trigger().await.expect("quit error");
     })
     .await;
 
@@ -70,7 +69,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
     if setup {
-        config_restore(&tproxy_args)?;
+        tproxy_restore(&tproxy_args)?;
     }
 
     Ok(())

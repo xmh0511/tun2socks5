@@ -5,7 +5,7 @@ use std::net::{IpAddr, Ipv4Addr};
 
 pub(crate) static mut ORIGINAL_GATEWAY: Option<IpAddr> = None;
 
-pub fn config_settings(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
+pub fn tproxy_settings(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
     // 1. Setup the adapter's DNS
     // command: `netsh interface ip set dns "utun3" static 8.8.8.8`
     let dns_addr = tproxy_args.tun_dns;
@@ -38,7 +38,7 @@ pub fn config_settings(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
     Ok(())
 }
 
-pub fn config_restore(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
+pub fn tproxy_restore(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
     if unsafe { ORIGINAL_GATEWAY.is_none() } {
         return Ok(());
     }

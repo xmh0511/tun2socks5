@@ -1,7 +1,7 @@
 use crate::{
     directions::{IncomingDataEvent, IncomingDirection, OutgoingDataEvent, OutgoingDirection},
     error::{Error, Result},
-    proxy_handler::{ConnectionManager, ProxyHandler},
+    proxy_handler::{ProxyHandler, ProxyHandlerManager},
     session_info::{IpProtocol, SessionInfo},
 };
 use base64::Engine;
@@ -377,7 +377,7 @@ pub(crate) struct HttpManager {
 }
 
 #[async_trait::async_trait]
-impl ConnectionManager for HttpManager {
+impl ProxyHandlerManager for HttpManager {
     async fn new_proxy_handler(&self, info: SessionInfo, _udp_associate: bool) -> std::io::Result<Arc<Mutex<dyn ProxyHandler>>> {
         if info.protocol != IpProtocol::Tcp {
             return Err(Error::from("Invalid protocol").into());

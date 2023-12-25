@@ -18,7 +18,7 @@ pub(crate) trait ProxyHandler: Send + Sync {
 }
 
 #[async_trait::async_trait]
-pub(crate) trait ConnectionManager: Send + Sync {
+pub(crate) trait ProxyHandlerManager: Send + Sync {
     async fn new_proxy_handler(&self, info: SessionInfo, udp_associate: bool) -> std::io::Result<Arc<Mutex<dyn ProxyHandler>>>;
     fn get_server_addr(&self) -> SocketAddr;
 }

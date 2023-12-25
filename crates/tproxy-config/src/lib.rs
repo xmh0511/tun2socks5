@@ -8,13 +8,13 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 pub use {private_ip::is_private_ip, tproxy_args::TproxyArgs};
 
 #[cfg(target_os = "linux")]
-pub use {linux::config_restore, linux::config_settings};
+pub use {linux::tproxy_restore, linux::tproxy_settings};
 
 #[cfg(target_os = "windows")]
-pub use {windows::config_restore, windows::config_settings};
+pub use {windows::tproxy_restore, windows::tproxy_settings};
 
 #[cfg(target_os = "macos")]
-pub use {macos::config_restore, macos::config_settings};
+pub use {macos::tproxy_restore, macos::tproxy_settings};
 
 pub const TUN_NAME: &str = if cfg!(target_os = "linux") {
     "tun0"

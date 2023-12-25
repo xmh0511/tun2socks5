@@ -3,7 +3,7 @@
 use crate::{run_command, TproxyArgs, DNS_SYS_CFG_FILE};
 use std::net::IpAddr;
 
-pub fn config_settings(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
+pub fn tproxy_settings(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
     let tun_name = &tproxy_args.tun_name;
     // sudo ip tuntap add name tun0 mode tun
     let args = &["tuntap", "add", "name", tun_name, "mode", "tun"];
@@ -50,7 +50,7 @@ pub fn config_settings(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
     Ok(())
 }
 
-pub fn config_restore(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
+pub fn tproxy_restore(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
     // sudo route del bypass_ip
     for bypass_ip in tproxy_args.bypass_ips.iter() {
         let args = &["del", &bypass_ip.to_string()];

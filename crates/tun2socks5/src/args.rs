@@ -1,10 +1,9 @@
 use crate::{Error, Result};
-use clap::Parser;
 use socks5_impl::protocol::UserKey;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use tproxy_config::TUN_NAME;
 
-#[derive(Debug, Clone, Parser)]
+#[derive(Debug, Clone, clap::Parser)]
 #[command(author, version, about = "tun2socks5 application.", long_about = None)]
 pub struct Args {
     /// Proxy URL in the form proto://[username[:password]@]host:port

@@ -1,7 +1,7 @@
 use crate::{
     directions::{IncomingDataEvent, IncomingDirection, OutgoingDataEvent, OutgoingDirection},
     error::{Error, Result},
-    proxy_handler::{ConnectionManager, ProxyHandler},
+    proxy_handler::{ProxyHandler, ProxyHandlerManager},
     session_info::SessionInfo,
 };
 use socks5_impl::protocol::{self, handshake, password_method, Address, AuthMethod, StreamOperation, UserKey, Version};
@@ -308,7 +308,7 @@ pub(crate) struct SocksProxyManager {
 }
 
 #[async_trait::async_trait]
-impl ConnectionManager for SocksProxyManager {
+impl ProxyHandlerManager for SocksProxyManager {
     async fn new_proxy_handler(&self, info: SessionInfo, udp_associate: bool) -> std::io::Result<Arc<Mutex<dyn ProxyHandler>>> {
         use socks5_impl::protocol::Command::{Connect, UdpAssociate};
         let command = if udp_associate { UdpAssociate } else { Connect };
