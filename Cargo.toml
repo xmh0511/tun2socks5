@@ -12,7 +12,7 @@ edition = "2021"
 async-recursion = "1.0"
 async-trait = "0.1"
 base64 = { version = "0.21" }
-clap = { version = "4.4", features = ["derive"] }
+clap = { version = "4.4", features = ["derive", "wrap_help", "color"] }
 digest_auth = "0.3"
 httparse = "1.8"
 ipstack = { git = "https://github.com/ssrlive/ipstack.git" }
@@ -35,4 +35,4 @@ tun = { git = "https://github.com/ssrlive/rust-tun.git", features = ["async"] }
 
 [[example]]
 name = "tun2socks5"
-path = "examples/tun2socks5.rs"
+path = "examples/main.rs"

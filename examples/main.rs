@@ -1,5 +1,5 @@
 use tproxy_config::{tproxy_restore, tproxy_settings, TproxyArgs, TUN_GATEWAY, TUN_IPV4, TUN_NETMASK};
-use tun2socks5::{clap::Parser, Args, Builder};
+use tun2socks5::{Args, Builder};
 
 // const MTU: u16 = 1500;
 const MTU: u16 = u16::MAX;
@@ -7,7 +7,7 @@ const MTU: u16 = u16::MAX;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
-    let args = Args::parse();
+    let args = Args::default();
 
     let tun_name = args.tun.clone();
     let bypass_ips = args.bypass.clone();

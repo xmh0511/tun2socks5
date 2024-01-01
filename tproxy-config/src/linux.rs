@@ -41,11 +41,11 @@ pub fn tproxy_settings(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
     let args = &["route", "add", "8000::/1", "dev", tun_name];
     run_command("ip", args)?;
 
-    // sudo sh -c "echo nameserver 198.18.0.1 > /etc/resolv.conf"
+    // sudo sh -c "echo nameserver 10.0.0.1 > /etc/resolv.conf"
     let file = std::fs::OpenOptions::new().write(true).truncate(true).open(DNS_SYS_CFG_FILE)?;
     let mut writer = std::io::BufWriter::new(file);
     use std::io::Write;
-    writeln!(writer, "nameserver 198.18.0.1")?;
+    writeln!(writer, "nameserver {}", tproxy_args.tun_gateway)?;
 
     Ok(())
 }

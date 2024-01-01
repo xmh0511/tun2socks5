@@ -1,10 +1,31 @@
 #!/bin/bash
 
-# sudo apt install iperf3 dante-server
-# sudo systemctl stop danted
+function install_rperf_bin() {
+    local rperf_bin_url="https://github.com/ssrlive/rperf/releases/latest/download/rperf-x86_64-unknown-linux-musl.zip"
+    local rperf_bin_zip_file="rperf-x86_64-unknown-linux-musl.zip"
+
+    command -v rperf > /dev/null
+    if [ $? -ne 0 ]; then
+        echo "Downloading rperf binary ..."
+        wget "$rperf_bin_url" >/dev/null 2>&1
+        unzip "$rperf_bin_zip_file" rperf -d /usr/local/bin/ >/dev/null 2>&1
+        rm "$rperf_bin_zip_file"
+    fi
+
+    rperf -h >/dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        echo "Failed to install rperf binary"
+        exit 1
+    fi
+}
+
+install_rperf_bin
+
+sudo apt install dante-server -y >/dev/null 2>&1
+sudo systemctl stop danted
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-echo $SCRIPT_DIR
+# echo $SCRIPT_DIR
 
 netns="test"
 dante="danted"
@@ -36,14 +57,14 @@ ip netns exec "$netns" rperf -s -B 10.0.0.4 &
 sleep 1
 
 # Prepare tun2socks5
-ip tuntap add name tun0 mode tun
-ip link set tun0 up
-ip route add 10.0.0.4 dev tun0
+ip tuntap add name tun3 mode tun
+ip link set tun3 up
+ip route add 10.0.0.4 dev tun3
 "$tun2socks5" --proxy socks5://10.0.0.3:10800 -v off &
 
 sleep 3
 
-# Run iperf client through tun2socks5
+# Run rperf client through tun2socks5
 rperf -c 10.0.0.4 -v off -P 1 -r
 
 sleep 3
@@ -58,6 +79,5 @@ sleep 3
 
 rperf -c 10.0.0.4 -v trace -P 1 -u -r
 
-
 # Clean up
-# sudo sh -c "pkill tun2socks5; pkill rperf; pkill danted; ip link del tun0; ip netns del test"
+# sudo sh -c "pkill tun2socks5; pkill rperf; pkill danted; ip link del tun3; ip netns del test"

@@ -6,7 +6,9 @@ use tproxy_config::TUN_NAME;
 #[derive(Debug, Clone, clap::Parser)]
 #[command(author, version, about = "tun2socks5 application.", long_about = None)]
 pub struct Args {
-    /// Proxy URL in the form proto://[username[:password]@]host:port
+    /// Proxy URL in the form proto://[username[:password]@]host:port,
+    /// where proto is one of socks4, socks5, http. For example:
+    /// socks5://myname:password@127.0.0.1:1080
     #[arg(short, long, value_parser = ArgProxy::from_url, value_name = "URL")]
     pub proxy: ArgProxy,
 
@@ -20,7 +22,8 @@ pub struct Args {
 
     #[cfg(target_os = "linux")]
     #[arg(short, long)]
-    /// Routing and system setup, which decides whether to setup the routing and system configuration
+    /// Routing and system setup, which decides whether to setup the routing and system configuration,
+    /// this option requires root privileges
     pub setup: bool,
 
     /// DNS handling strategy
@@ -38,6 +41,13 @@ pub struct Args {
     /// Verbosity level
     #[arg(short, long, value_name = "level", value_enum, default_value = "info")]
     pub verbosity: ArgVerbosity,
+}
+
+impl Default for Args {
+    fn default() -> Self {
+        use clap::Parser;
+        Self::parse()
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, clap::ValueEnum)]
