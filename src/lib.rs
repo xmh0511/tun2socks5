@@ -3,6 +3,7 @@ use crate::{
     directions::{IncomingDataEvent, IncomingDirection, OutgoingDirection},
     http::HttpManager,
     session_info::{IpProtocol, SessionInfo},
+    virtual_dns::VirtualDns,
 };
 pub use clap;
 use ipstack::stream::{IpStackStream, IpStackTcpStream, IpStackUdpStream};
@@ -32,6 +33,7 @@ mod http;
 mod proxy_handler;
 mod session_info;
 mod socks;
+mod virtual_dns;
 
 const DNS_PORT: u16 = 53;
 
@@ -127,6 +129,11 @@ where
     let key = args.proxy.credentials.clone();
     let dns_addr = args.dns_addr;
     let ipv6_enabled = args.ipv6_enabled;
+    let virtual_dns = if args.dns == args::ArgDns::Virtual {
+        Some(Arc::new(Mutex::new(VirtualDns::new())))
+    } else {
+        None
+    };
 
     use socks5_impl::protocol::Version::{V4, V5};
     let mgr = match args.proxy.proxy_type {
@@ -138,10 +145,13 @@ where
     let mut ipstack_config = ipstack::IpStackConfig::default();
     ipstack_config.mtu(mtu);
     ipstack_config.packet_info(packet_info);
+    ipstack_config.tcp_timeout(std::time::Duration::from_secs(600)); // 10 minutes
+    ipstack_config.udp_timeout(std::time::Duration::from_secs(10)); // 10 seconds
 
     let mut ip_stack = ipstack::IpStack::new(ipstack_config, device);
 
     loop {
+        let virtual_dns = virtual_dns.clone();
         let ip_stack_stream = tokio::select! {
             _ = quit.recv() => {
                 log::info!("");
@@ -156,7 +166,14 @@ where
             IpStackStream::Tcp(tcp) => {
                 log::trace!("Session count {}", TASK_COUNT.fetch_add(1, Relaxed) + 1);
                 let info = SessionInfo::new(tcp.local_addr(), tcp.peer_addr(), IpProtocol::Tcp);
-                let proxy_handler = mgr.new_proxy_handler(info, false).await?;
+                let domain_name = if let Some(virtual_dns) = &virtual_dns {
+                    let mut virtual_dns = virtual_dns.lock().await;
+                    virtual_dns.touch_ip(&tcp.peer_addr().ip());
+                    virtual_dns.resolve_ip(&tcp.peer_addr().ip()).cloned()
+                } else {
+                    None
+                };
+                let proxy_handler = mgr.new_proxy_handler(info, domain_name, false).await?;
                 tokio::spawn(async move {
                     if let Err(err) = handle_tcp_session(tcp, server_addr, proxy_handler).await {
                         log::error!("{} error \"{}\"", info, err);
@@ -172,7 +189,7 @@ where
                         info.dst.set_ip(dns_addr);
                     }
                     if args.dns == args::ArgDns::OverTcp {
-                        let proxy_handler = mgr.new_proxy_handler(info, false).await?;
+                        let proxy_handler = mgr.new_proxy_handler(info, None, false).await?;
                         tokio::spawn(async move {
                             if let Err(err) = handle_dns_over_tcp_session(udp, server_addr, proxy_handler, ipv6_enabled).await {
                                 log::error!("{} error \"{}\"", info, err);
@@ -181,8 +198,27 @@ where
                         });
                         continue;
                     }
+                    if args.dns == args::ArgDns::Virtual {
+                        tokio::spawn(async move {
+                            if let Some(virtual_dns) = virtual_dns {
+                                if let Err(err) = handle_virtual_dns_session(udp, virtual_dns).await {
+                                    log::error!("{} error \"{}\"", info, err);
+                                }
+                            }
+                            log::trace!("Session count {}", TASK_COUNT.fetch_sub(1, Relaxed) - 1);
+                        });
+                        continue;
+                    }
+                    assert_eq!(args.dns, args::ArgDns::Direct);
                 }
-                let proxy_handler = mgr.new_proxy_handler(info, true).await?;
+                let domain_name = if let Some(virtual_dns) = &virtual_dns {
+                    let mut virtual_dns = virtual_dns.lock().await;
+                    virtual_dns.touch_ip(&udp.peer_addr().ip());
+                    virtual_dns.resolve_ip(&udp.peer_addr().ip()).cloned()
+                } else {
+                    None
+                };
+                let proxy_handler = mgr.new_proxy_handler(info, domain_name, true).await?;
                 tokio::spawn(async move {
                     if let Err(err) = handle_udp_associate_session(udp, server_addr, proxy_handler, ipv6_enabled).await {
                         log::error!("{} error \"{}\"", info, err);
@@ -191,6 +227,20 @@ where
                 });
             }
         }
+    }
+    Ok(())
+}
+
+async fn handle_virtual_dns_session(mut udp: IpStackUdpStream, dns: Arc<Mutex<VirtualDns>>) -> crate::Result<()> {
+    let mut buf = [0_u8; 4096];
+    loop {
+        let len = udp.read(&mut buf).await?;
+        if len == 0 {
+            break;
+        }
+        let (msg, qname, ip) = dns.lock().await.generate_query(&buf[..len])?;
+        udp.write_all(&msg).await?;
+        log::debug!("Virtual DNS query: {} -> {}", qname, ip);
     }
     Ok(())
 }
@@ -230,9 +280,10 @@ async fn handle_udp_associate_session(
     proxy_handler: Arc<Mutex<dyn ProxyHandler>>,
     ipv6_enabled: bool,
 ) -> crate::Result<()> {
-    use socks5_impl::protocol::{StreamOperation, UdpHeader};
+    use socks5_impl::protocol::{Address, StreamOperation, UdpHeader};
     let mut server = TcpStream::connect(server_addr).await?;
     let session_info = proxy_handler.lock().await.get_session_info();
+    let domain_name = proxy_handler.lock().await.get_domain_name();
     log::info!("Beginning {}", session_info);
 
     let udp_addr = handle_proxy_session(&mut server, proxy_handler).await?;
@@ -251,9 +302,15 @@ async fn handle_udp_associate_session(
                 }
                 let buf1 = &buf1[..len];
 
+                let s5addr = if let Some(domain_name) = &domain_name {
+                    Address::DomainAddress(domain_name.clone(), session_info.dst.port())
+                } else {
+                    session_info.dst.into()
+                };
+
                 // Add SOCKS5 UDP header to the incoming data
                 let mut s5_udp_data = Vec::<u8>::new();
-                UdpHeader::new(0, session_info.dst.into()).write_to_stream(&mut s5_udp_data)?;
+                UdpHeader::new(0, s5addr).write_to_stream(&mut s5_udp_data)?;
                 s5_udp_data.extend_from_slice(buf1);
 
                 udp_server.write_all(&s5_udp_data).await?;

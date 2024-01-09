@@ -57,9 +57,9 @@ ip netns exec "$netns" rperf -s -B 10.0.0.4 &
 sleep 1
 
 # Prepare tun2socks5
-ip tuntap add name tun3 mode tun
-ip link set tun3 up
-ip route add 10.0.0.4 dev tun3
+ip tuntap add name tun0 mode tun
+ip link set tun0 up
+ip route add 10.0.0.4 dev tun0
 "$tun2socks5" --proxy socks5://10.0.0.3:10800 -v off &
 
 sleep 3
@@ -80,4 +80,4 @@ sleep 3
 rperf -c 10.0.0.4 -v trace -P 1 -u -r
 
 # Clean up
-# sudo sh -c "pkill tun2socks5; pkill rperf; pkill danted; ip link del tun3; ip netns del test"
+# sudo sh -c "pkill tun2socks5; pkill rperf; pkill danted; ip link del tun0; ip netns del test"
