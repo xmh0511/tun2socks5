@@ -145,10 +145,3 @@ impl std::fmt::Display for ProxyType {
         }
     }
 }
-
-#[allow(dead_code)]
-pub enum NetworkInterface {
-    Named(String),
-    #[cfg(unix)]
-    Fd(std::os::fd::RawFd),
-}

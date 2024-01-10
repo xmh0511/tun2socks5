@@ -25,6 +25,7 @@ pub use {
     error::{Error, Result},
 };
 
+mod android;
 mod args;
 mod directions;
 mod dns;

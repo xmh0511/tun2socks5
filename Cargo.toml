@@ -8,6 +8,9 @@ version = "0.1.0"
 edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[lib]
+crate-type = ["staticlib", "cdylib", "lib"]
+
 [dependencies]
 async-recursion = "1.0"
 async-trait = "0.1"
@@ -26,6 +29,11 @@ trust-dns-proto = "0.23"
 udp-stream = { version = "0.0", default-features = false }
 unicase = "2.7"
 url = "2.5"
+
+[target.'cfg(target_os="android")'.dependencies]
+android_logger = "0.13"
+jni = { version = "0.21", default-features = false }
+tun = { git = "https://github.com/ssrlive/rust-tun.git", features = ["async"] }
 
 [dev-dependencies]
 ctrlc2 = { version = "3.5", features = ["tokio", "termination"] }
