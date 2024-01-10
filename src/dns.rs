@@ -5,7 +5,6 @@ use trust_dns_proto::{
     rr::{record_type::RecordType, Name, RData, Record},
 };
 
-#[allow(dead_code)]
 pub fn build_dns_response(mut request: Message, domain: &str, ip: IpAddr, ttl: u32) -> Result<Message, String> {
     let record = match ip {
         IpAddr::V4(ip) => {

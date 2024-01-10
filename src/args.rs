@@ -13,8 +13,12 @@ pub struct Args {
     pub proxy: ArgProxy,
 
     /// Name of the tun interface
-    #[arg(short, long, value_name = "name", default_value = TUN_NAME)]
+    #[arg(short, long, value_name = "name", conflicts_with = "tun_fd", default_value = TUN_NAME)]
     pub tun: String,
+
+    /// File descriptor of the tun interface
+    #[arg(long, value_name = "fd", conflicts_with = "tun")]
+    pub tun_fd: Option<i32>,
 
     /// IPv6 enabled
     #[arg(short = '6', long)]

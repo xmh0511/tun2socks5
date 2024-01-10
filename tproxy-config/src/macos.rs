@@ -7,7 +7,7 @@ static mut ORIGINAL_DNS_SERVERS: Vec<IpAddr> = Vec::new();
 static mut ORIGINAL_GATEWAY: Option<IpAddr> = None;
 static mut ORIGINAL_GW_SCOPE: Option<String> = None;
 
-pub fn tproxy_settings(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
+pub fn tproxy_setup(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
     // 0. Save the original gateway and scope
     let (original_gateway, orig_gw_iface) = get_default_gateway()?;
     unsafe {
@@ -79,7 +79,7 @@ pub fn tproxy_settings(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
     Ok(())
 }
 
-pub fn tproxy_restore(_tproxy_args: &TproxyArgs) -> std::io::Result<()> {
+pub fn tproxy_remove(_tproxy_args: &TproxyArgs) -> std::io::Result<()> {
     if unsafe { ORIGINAL_GATEWAY.is_none() } {
         return Ok(());
     }
