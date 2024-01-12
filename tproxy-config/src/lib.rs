@@ -38,7 +38,7 @@ pub const TUN_DNS: IpAddr = IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8));
 
 #[allow(dead_code)]
 #[cfg(unix)]
-pub(crate) const DNS_SYS_CFG_FILE: &str = "/etc/resolv.conf";
+pub(crate) const ETC_RESOLV_CONF_FILE: &str = "/etc/resolv.conf";
 
 #[allow(dead_code)]
 pub(crate) fn run_command(command: &str, args: &[&str]) -> std::io::Result<Vec<u8>> {

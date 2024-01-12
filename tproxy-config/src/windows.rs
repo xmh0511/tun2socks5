@@ -22,7 +22,7 @@ fn check_and_restore(tproxy_args: &TproxyArgs) {
             unsafe {
                 ORIGINAL_GATEWAY = content.gateway;
             };
-            tproxy_remove(tproxy_args).unwrap();
+            let _ = tproxy_remove(tproxy_args);
         }
     }
 }

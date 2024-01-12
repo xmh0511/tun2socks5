@@ -1,6 +1,6 @@
 #![cfg(target_os = "macos")]
 
-use crate::{is_private_ip, run_command, TproxyArgs, DNS_SYS_CFG_FILE};
+use crate::{is_private_ip, run_command, TproxyArgs, ETC_RESOLV_CONF_FILE};
 use serde::{Deserialize, Serialize};
 use std::{
     net::{IpAddr, SocketAddr},
@@ -103,7 +103,7 @@ pub fn tproxy_setup(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
 
     // 5. Set the DNS server to a reserved IP address
     // Command: `sudo sh -c "echo nameserver 10.0.0.1 > /etc/resolv.conf"`
-    let file = std::fs::OpenOptions::new().write(true).truncate(true).open(DNS_SYS_CFG_FILE)?;
+    let file = std::fs::OpenOptions::new().write(true).truncate(true).open(ETC_RESOLV_CONF_FILE)?;
     let mut writer = std::io::BufWriter::new(file);
 
     use std::io::Write;
@@ -179,7 +179,7 @@ pub fn tproxy_remove(_tproxy_args: &TproxyArgs) -> std::io::Result<()> {
 
     // 3. Restore DNS server to the original gateway
     // command: `sudo sh -c "echo nameserver original_gateway > /etc/resolv.conf"`
-    let file = std::fs::OpenOptions::new().write(true).truncate(true).open(DNS_SYS_CFG_FILE)?;
+    let file = std::fs::OpenOptions::new().write(true).truncate(true).open(ETC_RESOLV_CONF_FILE)?;
     let mut writer = std::io::BufWriter::new(file);
     use std::io::Write;
     writeln!(writer, "nameserver {}\n", original_gateway)?;
@@ -246,7 +246,7 @@ pub(crate) fn configure_dns_servers(dns_servers: &[IpAddr]) -> std::io::Result<(
 
 fn extract_system_dns_servers() -> std::io::Result<Vec<IpAddr>> {
     let mut buf = Vec::with_capacity(4096);
-    let mut f = std::fs::File::open(DNS_SYS_CFG_FILE)?;
+    let mut f = std::fs::File::open(ETC_RESOLV_CONF_FILE)?;
     use std::io::Read;
     f.read_to_end(&mut buf)?;
     let cfg = resolv_conf::Config::parse(&buf).map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;

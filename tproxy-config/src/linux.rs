@@ -1,6 +1,6 @@
 #![cfg(target_os = "linux")]
 
-use crate::{run_command, TproxyArgs, DNS_SYS_CFG_FILE};
+use crate::{run_command, TproxyArgs, ETC_RESOLV_CONF_FILE};
 use std::net::IpAddr;
 
 fn check_and_restore(tproxy_args: &TproxyArgs) {
@@ -49,7 +49,7 @@ pub fn tproxy_setup(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
     run_command("ip", args)?;
 
     // sudo sh -c "echo nameserver 10.0.0.1 > /etc/resolv.conf"
-    let file = std::fs::OpenOptions::new().write(true).truncate(true).open(DNS_SYS_CFG_FILE)?;
+    let file = std::fs::OpenOptions::new().write(true).truncate(true).open(ETC_RESOLV_CONF_FILE)?;
     let mut writer = std::io::BufWriter::new(file);
     use std::io::Write;
     writeln!(writer, "nameserver {}", tproxy_args.tun_gateway)?;
