@@ -3,7 +3,13 @@
 use crate::{run_command, TproxyArgs, DNS_SYS_CFG_FILE};
 use std::net::IpAddr;
 
+fn check_and_restore(tproxy_args: &TproxyArgs) {
+    let _ = tproxy_remove(tproxy_args);
+}
+
 pub fn tproxy_setup(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
+    check_and_restore(tproxy_args);
+
     let tun_name = &tproxy_args.tun_name;
     // sudo ip tuntap add name tun0 mode tun
     let args = &["tuntap", "add", "name", tun_name, "mode", "tun"];

@@ -4,7 +4,10 @@ mod private_ip;
 mod tproxy_args;
 mod windows;
 
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    path::PathBuf,
+};
 pub use {private_ip::is_private_ip, tproxy_args::TproxyArgs};
 
 #[cfg(target_os = "linux")]
@@ -46,4 +49,10 @@ pub(crate) fn run_command(command: &str, args: &[&str]) -> std::io::Result<Vec<u
         return Err(std::io::Error::new(std::io::ErrorKind::Other, info));
     }
     Ok(out.stdout)
+}
+
+#[allow(dead_code)]
+pub(crate) fn get_record_file_path() -> PathBuf {
+    let temp_dir = std::env::temp_dir();
+    temp_dir.join("tproxy_config_routing_backup.json")
 }

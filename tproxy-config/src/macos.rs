@@ -1,13 +1,45 @@
 #![cfg(target_os = "macos")]
 
 use crate::{is_private_ip, run_command, TproxyArgs, DNS_SYS_CFG_FILE};
-use std::net::{IpAddr, SocketAddr};
+use serde::{Deserialize, Serialize};
+use std::{
+    net::{IpAddr, SocketAddr},
+    str::FromStr,
+};
 
 static mut ORIGINAL_DNS_SERVERS: Vec<IpAddr> = Vec::new();
 static mut ORIGINAL_GATEWAY: Option<IpAddr> = None;
 static mut ORIGINAL_GW_SCOPE: Option<String> = None;
 
+#[derive(Serialize, Deserialize, Debug)]
+struct DefaultConfigFile {
+    dns_servers: Vec<IpAddr>,
+    gateway: Option<IpAddr>,
+    gw_scope: Option<String>,
+}
+
+fn check_and_restore(tproxy_args: &TproxyArgs) {
+    let path = crate::get_record_file_path();
+    if !path.exists() {
+        return;
+    }
+    if let Ok(s) = std::fs::read_to_string(path) {
+        if let Ok(content) = serde_json::from_str(&s) {
+            let content: DefaultConfigFile = content;
+            unsafe {
+                ORIGINAL_DNS_SERVERS = content.dns_servers;
+                ORIGINAL_GATEWAY = content.gateway;
+                ORIGINAL_GW_SCOPE = content.gw_scope;
+            };
+            let _ = tproxy_remove(tproxy_args);
+        }
+    }
+}
+
 pub fn tproxy_setup(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
+    // check whether a recent exception exit
+    check_and_restore(tproxy_args);
+
     // 0. Save the original gateway and scope
     let (original_gateway, orig_gw_iface) = get_default_gateway()?;
     unsafe {
@@ -76,6 +108,19 @@ pub fn tproxy_setup(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
 
     use std::io::Write;
     writeln!(writer, "nameserver {}\n", tun_gateway)?;
+
+    {
+        let disk_record = unsafe {
+            DefaultConfigFile {
+                dns_servers: ORIGINAL_DNS_SERVERS.clone(),
+                gateway: ORIGINAL_GATEWAY,
+                gw_scope: ORIGINAL_GW_SCOPE.clone(),
+            }
+        };
+        let record_file_content = serde_json::to_string(&disk_record)?;
+        std::fs::write(crate::get_record_file_path(), record_file_content)?;
+    }
+
     Ok(())
 }
 
@@ -137,8 +182,10 @@ pub fn tproxy_remove(_tproxy_args: &TproxyArgs) -> std::io::Result<()> {
     let file = std::fs::OpenOptions::new().write(true).truncate(true).open(DNS_SYS_CFG_FILE)?;
     let mut writer = std::io::BufWriter::new(file);
     use std::io::Write;
-
     writeln!(writer, "nameserver {}\n", original_gateway)?;
+
+    // remove the record file anyway
+    let _ = std::fs::remove_file(crate::get_record_file_path());
 
     Ok(())
 }
@@ -158,7 +205,7 @@ pub(crate) fn get_default_gateway() -> std::io::Result<(IpAddr, String)> {
     if v.len() != 2 {
         return Err(std::io::Error::new(std::io::ErrorKind::Other, "No default gateway found"));
     }
-    use std::str::FromStr;
+
     let addr = IpAddr::from_str(v[0]).map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
     Ok((addr, v[1].to_string()))
 }

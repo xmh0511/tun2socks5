@@ -1,11 +1,36 @@
 #![cfg(target_os = "windows")]
 
 use crate::{run_command, TproxyArgs};
+use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr};
 
 pub(crate) static mut ORIGINAL_GATEWAY: Option<IpAddr> = None;
 
+#[derive(Serialize, Deserialize, Debug)]
+struct DefaultConfigFile {
+    gateway: Option<IpAddr>,
+}
+
+fn check_and_restore(tproxy_args: &TproxyArgs) {
+    let path = crate::get_record_file_path();
+    if !path.exists() {
+        return;
+    }
+    if let Ok(s) = std::fs::read_to_string(path) {
+        if let Ok(content) = serde_json::from_str(&s) {
+            let content: DefaultConfigFile = content;
+            unsafe {
+                ORIGINAL_GATEWAY = content.gateway;
+            };
+            tproxy_remove(tproxy_args).unwrap();
+        }
+    }
+}
+
 pub fn tproxy_setup(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
+    // check whether a recent exception exit
+    check_and_restore(tproxy_args);
+
     // 1. Setup the adapter's DNS
     // command: `netsh interface ip set dns "utun3" static 8.8.8.8`
     let dns_addr = tproxy_args.tun_dns;
@@ -36,6 +61,12 @@ pub fn tproxy_setup(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
         run_command("route", args)?;
         #[cfg(feature = "log")]
         log::info!("route {:?}", args);
+    }
+
+    {
+        let disk_record = unsafe { DefaultConfigFile { gateway: ORIGINAL_GATEWAY } };
+        let record_file_content = serde_json::to_string(&disk_record)?;
+        std::fs::write(crate::get_record_file_path(), record_file_content)?;
     }
 
     Ok(())
@@ -74,6 +105,9 @@ pub fn tproxy_remove(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
         #[cfg(feature = "log")]
         log::debug!("command \"route {:?}\" error: {}", args, _err);
     }
+
+    // remove the record file anyway
+    let _ = std::fs::remove_file(crate::get_record_file_path());
 
     Ok(())
 }
