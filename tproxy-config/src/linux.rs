@@ -20,8 +20,9 @@ pub fn tproxy_setup(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
     for bypass_ip in tproxy_args.bypass_ips.iter() {
         let cmd = format!("ip route add {} {}", bypass_ip, stdout.trim());
         let args = &["-c", &cmd];
-        if let Err(err) = run_command("sh", args) {
-            log::trace!("run_command {}", err);
+        if let Err(_err) = run_command("sh", args) {
+            #[cfg(feature = "log")]
+            log::trace!("run_command {}", _err);
         }
     }
 
@@ -54,16 +55,25 @@ pub fn tproxy_remove(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
     // sudo route del bypass_ip
     for bypass_ip in tproxy_args.bypass_ips.iter() {
         let args = &["del", &bypass_ip.to_string()];
-        run_command("route", args)?;
+        if let Err(_err) = run_command("route", args) {
+            #[cfg(feature = "log")]
+            log::debug!("command \"route del {}\" error: {}", bypass_ip, _err);
+        }
     }
 
     // sudo ip link del tun0
     let args = &["link", "del", &tproxy_args.tun_name];
-    run_command("ip", args)?;
+    if let Err(_err) = run_command("ip", args) {
+        #[cfg(feature = "log")]
+        log::debug!("command \"ip {:?}\" error: {}", args, _err);
+    }
 
     // sudo systemctl restart systemd-resolved.service
     let args = &["restart", "systemd-resolved.service"];
-    run_command("systemctl", args)?;
+    if let Err(_err) = run_command("systemctl", args) {
+        #[cfg(feature = "log")]
+        log::debug!("command \"systemctl {:?}\" error: {}", args, _err);
+    }
 
     Ok(())
 }

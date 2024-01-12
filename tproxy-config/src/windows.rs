@@ -12,6 +12,7 @@ pub fn tproxy_setup(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
     let tun_name = format!("\"{}\"", tproxy_args.tun_name);
     let args = &["interface", "ip", "set", "dns", &tun_name, "static", &dns_addr.to_string()];
     run_command("netsh", args)?;
+    #[cfg(feature = "log")]
     log::info!("netsh {:?}", args);
 
     // 2. Route all traffic to the adapter, here the destination is adapter's gateway
@@ -20,6 +21,7 @@ pub fn tproxy_setup(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
     let gateway = tproxy_args.tun_gateway.to_string();
     let args = &["add", &unspecified, "mask", &unspecified, &gateway, "metric", "6"];
     run_command("route", args)?;
+    #[cfg(feature = "log")]
     log::info!("route {:?}", args);
 
     let (original_gateway, _) = get_default_gateway()?;
@@ -32,6 +34,7 @@ pub fn tproxy_setup(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
     for bypass_ip in tproxy_args.bypass_ips.iter() {
         let args = &["add", &bypass_ip.to_string(), &original_gateway.to_string(), "metric", "1"];
         run_command("route", args)?;
+        #[cfg(feature = "log")]
         log::info!("route {:?}", args);
     }
 
@@ -50,18 +53,27 @@ pub fn tproxy_remove(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
     // command: `route -p delete 0.0.0.0 mask 0.0.0.0 10.0.0.1`
     let gateway = tproxy_args.tun_gateway.to_string();
     let args = &["-p", "delete", &unspecified, "mask", &unspecified, &gateway];
-    run_command("route", args)?;
+    if let Err(_err) = run_command("route", args) {
+        #[cfg(feature = "log")]
+        log::debug!("command \"route {:?}\" error: {}", args, _err);
+    }
 
     // 1. Remove current adapter's route
     // command: `route delete 0.0.0.0 mask 0.0.0.0`
     let args = &["delete", &unspecified, "mask", &unspecified];
-    run_command("route", args)?;
+    if let Err(_err) = run_command("route", args) {
+        #[cfg(feature = "log")]
+        log::debug!("command \"route {:?}\" error: {}", args, _err);
+    }
 
     // 2. Add back the original gateway route
     // command: `route add 0.0.0.0 mask 0.0.0.0 original_gateway metric 200`
     let original_gateway = original_gateway.to_string();
     let args = &["add", &unspecified, "mask", &unspecified, &original_gateway, "metric", "200"];
-    run_command("route", args)?;
+    if let Err(_err) = run_command("route", args) {
+        #[cfg(feature = "log")]
+        log::debug!("command \"route {:?}\" error: {}", args, _err);
+    }
 
     Ok(())
 }

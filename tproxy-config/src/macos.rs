@@ -91,17 +91,32 @@ pub fn tproxy_remove(_tproxy_args: &TproxyArgs) -> std::io::Result<()> {
     let err = std::io::Error::new(std::io::ErrorKind::Other, "No original gateway scope found");
     let original_gw_scope = unsafe { ORIGINAL_GW_SCOPE.take() }.ok_or(err)?;
 
-    configure_system_proxy(false, None, None)?;
+    if let Err(_err) = configure_system_proxy(false, None, None) {
+        #[cfg(feature = "log")]
+        log::debug!("configure_system_proxy error: {}", _err);
+    }
     if !original_dns_servers.is_empty() {
-        configure_dns_servers(&original_dns_servers)?;
+        if let Err(_err) = configure_dns_servers(&original_dns_servers) {
+            #[cfg(feature = "log")]
+            log::debug!("configure_dns_servers error: {}", _err);
+        }
     }
 
     // route delete default
     // route delete default -ifscope original_gw_scope
     // route add default original_gateway
-    run_command("route", &["delete", "default"])?;
-    run_command("route", &["delete", "default", "-ifscope", &original_gw_scope])?;
-    run_command("route", &["add", "default", &original_gateway])?;
+    if let Err(_err) = run_command("route", &["delete", "default"]) {
+        #[cfg(feature = "log")]
+        log::debug!("command \"route delete default\" error: {}", _err);
+    }
+    if let Err(_err) = run_command("route", &["delete", "default", "-ifscope", &original_gw_scope]) {
+        #[cfg(feature = "log")]
+        log::debug!("command \"route delete default -ifscope {}\" error: {}", original_gw_scope, _err);
+    }
+    if let Err(_err) = run_command("route", &["add", "default", &original_gateway]) {
+        #[cfg(feature = "log")]
+        log::debug!("command \"route add default {}\" error: {}", original_gateway, _err);
+    }
 
     /*
     let unspecified = Ipv4Addr::UNSPECIFIED.to_string();
