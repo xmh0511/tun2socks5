@@ -1,7 +1,3 @@
-[workspace]
-resolver = "2"
-members = ["tproxy-config"]
-
 [package]
 name = "tun2socks5"
 version = "0.1.0"
@@ -33,14 +29,18 @@ url = "2.5"
 [target.'cfg(target_os="android")'.dependencies]
 android_logger = "0.13"
 jni = { version = "0.21", default-features = false }
-tun = { git = "https://github.com/ssrlive/rust-tun.git", features = ["async"] }
+tun = { git = "https://github.com/ssrlive/rust-tun.git", branch = "master", features = [
+    "async",
+] }
 
 [dev-dependencies]
 ctrlc2 = { version = "3.5", features = ["tokio", "termination"] }
 dotenvy = "0.15"
 env_logger = "0.10"
 tproxy-config = { path = "tproxy-config", features = ["log"] }
-tun = { git = "https://github.com/ssrlive/rust-tun.git", features = ["async"] }
+tun = { git = "https://github.com/ssrlive/rust-tun.git", branch = "master", features = [
+    "async",
+] }
 
 [[example]]
 name = "tun2socks5"

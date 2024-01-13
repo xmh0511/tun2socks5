@@ -1,36 +1,9 @@
 #![cfg(target_os = "windows")]
 
-use crate::{run_command, TproxyArgs};
-use serde::{Deserialize, Serialize};
+use crate::{run_command, IntermediateState, TproxyArgs};
 use std::net::{IpAddr, Ipv4Addr};
 
-pub(crate) static mut ORIGINAL_GATEWAY: Option<IpAddr> = None;
-
-#[derive(Serialize, Deserialize, Debug)]
-struct DefaultConfigFile {
-    gateway: Option<IpAddr>,
-}
-
-fn check_and_restore(tproxy_args: &TproxyArgs) {
-    let path = crate::get_record_file_path();
-    if !path.exists() {
-        return;
-    }
-    if let Ok(s) = std::fs::read_to_string(path) {
-        if let Ok(content) = serde_json::from_str(&s) {
-            let content: DefaultConfigFile = content;
-            unsafe {
-                ORIGINAL_GATEWAY = content.gateway;
-            };
-            let _ = tproxy_remove(tproxy_args);
-        }
-    }
-}
-
 pub fn tproxy_setup(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
-    // check whether a recent exception exit
-    check_and_restore(tproxy_args);
-
     // 1. Setup the adapter's DNS
     // command: `netsh interface ip set dns "utun3" static 8.8.8.8`
     let dns_addr = tproxy_args.tun_dns;
@@ -50,9 +23,6 @@ pub fn tproxy_setup(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
     log::info!("route {:?}", args);
 
     let (original_gateway, _) = get_default_gateway()?;
-    unsafe {
-        ORIGINAL_GATEWAY = Some(original_gateway);
-    }
 
     // 3. route the bypass ip to the original gateway
     // command: `route add bypass_ip original_gateway metric 1`
@@ -63,21 +33,20 @@ pub fn tproxy_setup(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
         log::info!("route {:?}", args);
     }
 
-    {
-        let disk_record = unsafe { DefaultConfigFile { gateway: ORIGINAL_GATEWAY } };
-        let record_file_content = serde_json::to_string(&disk_record)?;
-        std::fs::write(crate::get_record_file_path(), record_file_content)?;
-    }
+    let disk_record = IntermediateState {
+        gateway: Some(original_gateway),
+        ..IntermediateState::default()
+    };
+    crate::store_intermediate_state(&disk_record)?;
 
     Ok(())
 }
 
 pub fn tproxy_remove(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
-    if unsafe { ORIGINAL_GATEWAY.is_none() } {
-        return Ok(());
-    }
+    let mut state = crate::retrieve_intermediate_state()?;
+
     let err = std::io::Error::new(std::io::ErrorKind::Other, "No default gateway found");
-    let original_gateway = unsafe { ORIGINAL_GATEWAY.take() }.ok_or(err)?;
+    let original_gateway = state.gateway.take().ok_or(err)?;
     let unspecified = Ipv4Addr::UNSPECIFIED.to_string();
 
     // 0. delete persistent route
@@ -107,7 +76,7 @@ pub fn tproxy_remove(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
     }
 
     // remove the record file anyway
-    let _ = std::fs::remove_file(crate::get_record_file_path());
+    let _ = std::fs::remove_file(crate::get_state_file_path());
 
     Ok(())
 }

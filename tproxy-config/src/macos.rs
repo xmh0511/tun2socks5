@@ -1,57 +1,16 @@
 #![cfg(target_os = "macos")]
 
-use crate::{is_private_ip, run_command, TproxyArgs, ETC_RESOLV_CONF_FILE};
-use serde::{Deserialize, Serialize};
+use crate::{is_private_ip, run_command, IntermediateState, TproxyArgs, ETC_RESOLV_CONF_FILE};
 use std::{
     net::{IpAddr, SocketAddr},
     str::FromStr,
 };
 
-static mut ORIGINAL_DNS_SERVERS: Vec<IpAddr> = Vec::new();
-static mut ORIGINAL_GATEWAY: Option<IpAddr> = None;
-static mut ORIGINAL_GW_SCOPE: Option<String> = None;
-
-#[derive(Serialize, Deserialize, Debug)]
-struct DefaultConfigFile {
-    dns_servers: Vec<IpAddr>,
-    gateway: Option<IpAddr>,
-    gw_scope: Option<String>,
-}
-
-fn check_and_restore(tproxy_args: &TproxyArgs) {
-    let path = crate::get_record_file_path();
-    if !path.exists() {
-        return;
-    }
-    if let Ok(s) = std::fs::read_to_string(path) {
-        if let Ok(content) = serde_json::from_str(&s) {
-            let content: DefaultConfigFile = content;
-            unsafe {
-                ORIGINAL_DNS_SERVERS = content.dns_servers;
-                ORIGINAL_GATEWAY = content.gateway;
-                ORIGINAL_GW_SCOPE = content.gw_scope;
-            };
-            let _ = tproxy_remove(tproxy_args);
-        }
-    }
-}
-
 pub fn tproxy_setup(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
-    // check whether a recent exception exit
-    check_and_restore(tproxy_args);
-
     // 0. Save the original gateway and scope
-    let (original_gateway, orig_gw_iface) = get_default_gateway()?;
-    unsafe {
-        ORIGINAL_GATEWAY = Some(original_gateway);
-        ORIGINAL_GW_SCOPE = Some(orig_gw_iface.clone());
-    }
-    let original_gateway = original_gateway.to_string();
-
+    let (original_gateway_0, orig_gw_iface) = get_default_gateway()?;
+    let original_gateway = original_gateway_0.to_string();
     let dns_servers = extract_system_dns_servers()?;
-    unsafe {
-        ORIGINAL_DNS_SERVERS = dns_servers.clone();
-    }
 
     let tun_ip = tproxy_args.tun_ip.to_string();
     let tun_netmask = tproxy_args.tun_netmask.to_string();
@@ -109,32 +68,25 @@ pub fn tproxy_setup(tproxy_args: &TproxyArgs) -> std::io::Result<()> {
     use std::io::Write;
     writeln!(writer, "nameserver {}\n", tun_gateway)?;
 
-    {
-        let disk_record = unsafe {
-            DefaultConfigFile {
-                dns_servers: ORIGINAL_DNS_SERVERS.clone(),
-                gateway: ORIGINAL_GATEWAY,
-                gw_scope: ORIGINAL_GW_SCOPE.clone(),
-            }
-        };
-        let record_file_content = serde_json::to_string(&disk_record)?;
-        std::fs::write(crate::get_record_file_path(), record_file_content)?;
-    }
+    let disk_record = IntermediateState {
+        dns_servers: Some(dns_servers),
+        gateway: Some(original_gateway_0),
+        gw_scope: Some(orig_gw_iface),
+    };
+    crate::store_intermediate_state(&disk_record)?;
 
     Ok(())
 }
 
 pub fn tproxy_remove(_tproxy_args: &TproxyArgs) -> std::io::Result<()> {
-    if unsafe { ORIGINAL_GATEWAY.is_none() } {
-        return Ok(());
-    }
+    let mut state = crate::retrieve_intermediate_state()?;
 
-    let original_dns_servers = unsafe { std::mem::take(&mut ORIGINAL_DNS_SERVERS) };
+    let original_dns_servers = state.dns_servers.take().unwrap_or_default();
 
     let err = std::io::Error::new(std::io::ErrorKind::Other, "No original gateway found");
-    let original_gateway = unsafe { ORIGINAL_GATEWAY.take() }.ok_or(err)?.to_string();
+    let original_gateway = state.gateway.take().ok_or(err)?.to_string();
     let err = std::io::Error::new(std::io::ErrorKind::Other, "No original gateway scope found");
-    let original_gw_scope = unsafe { ORIGINAL_GW_SCOPE.take() }.ok_or(err)?;
+    let original_gw_scope = state.gw_scope.take().ok_or(err)?;
 
     if let Err(_err) = configure_system_proxy(false, None, None) {
         #[cfg(feature = "log")]
@@ -185,7 +137,7 @@ pub fn tproxy_remove(_tproxy_args: &TproxyArgs) -> std::io::Result<()> {
     writeln!(writer, "nameserver {}\n", original_gateway)?;
 
     // remove the record file anyway
-    let _ = std::fs::remove_file(crate::get_record_file_path());
+    let _ = std::fs::remove_file(crate::get_state_file_path());
 
     Ok(())
 }
