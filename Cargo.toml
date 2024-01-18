@@ -15,7 +15,7 @@ clap = { version = "4.4", features = ["derive", "wrap_help", "color"] }
 digest_auth = "0.3"
 hashlink = "0.9"
 httparse = "1.8"
-ipstack = { git = "https://github.com/ssrlive/ipstack.git" }
+ipstack = "0.0.2"
 log = "0.4"
 socks5-impl = { version = "0.5" }
 thiserror = "1.0"
